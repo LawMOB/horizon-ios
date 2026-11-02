@@ -106,7 +106,7 @@ pub struct TouchLayout {
 
 /// Controls the player can move and resize: the nine buttons (in [`TouchButton::ALL`]'s order),
 /// then close, Shift, hide keyboard, the joystick and the F3 combinations button.
-pub const CUSTOM_SLOTS: usize = 16;
+pub const CUSTOM_SLOTS: usize = 17;
 /// The slot of the close button, Shift toggle, keyboard button and joystick.
 pub const SLOT_CLOSE: usize = 9;
 pub const SLOT_SHIFT: usize = 10;
@@ -120,6 +120,8 @@ pub const SLOT_COMBOS: usize = 13;
 pub const SLOT_INFO: usize = 14;
 /// The zoom button.
 pub const SLOT_ZOOM: usize = 15;
+/// The waypoints button.
+pub const SLOT_WAYPOINTS: usize = 16;
 /// The zoom levels the zoom button can have, from [`TouchSettings::zoom_level`].
 pub const ZOOM_FACTORS: [f32; 6] = [2.0, 3.0, 4.0, 6.0, 8.0, 10.0];
 /// A control left alone: no offset, its normal size.
@@ -176,6 +178,16 @@ impl TouchLayout {
                 let gap = (5.0 * self.scale).round();
                 Rect::new(
                     self.width - self.right - small - 4.0 * (small + gap),
+                    self.top,
+                    small,
+                    small,
+                )
+            }
+            SLOT_WAYPOINTS => {
+                let small = (18.0 * self.scale).round();
+                let gap = (5.0 * self.scale).round();
+                Rect::new(
+                    self.width - self.right - small - 5.0 * (small + gap),
                     self.top,
                     small,
                     small,
@@ -344,6 +356,9 @@ impl TouchLayout {
     }
     /// The button that hides the system keyboard, left of the close button: the iPhone's
     /// keyboard has no key of its own for it.
+    pub fn waypoints_button(&self) -> Rect {
+        self.slot_rect(SLOT_WAYPOINTS)
+    }
     pub fn zoom_button(&self) -> Rect {
         self.slot_rect(SLOT_ZOOM)
     }

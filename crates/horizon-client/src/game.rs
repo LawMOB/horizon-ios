@@ -6067,6 +6067,7 @@ impl Game<'_> {
         self.draw_waypoints(&mut batch);
         #[cfg(target_os = "ios")]
         self.draw_touch_controls(&mut batch);
+        self.draw_waypoint_panel(&mut batch);
         self.draw_pad_cursor(&mut batch);
         batch
     }

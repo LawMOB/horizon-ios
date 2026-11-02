@@ -9,7 +9,8 @@ use horizon_client::{
     osk::Output,
     touch::{
         CUSTOM_SIZE, CUSTOM_SLOTS, MenuAction, NO_CUSTOM, Rect, SLOT_CLOSE, SLOT_COMBOS, SLOT_INFO,
-        SLOT_KEYBOARD, SLOT_SHIFT, SLOT_STICK, SLOT_ZOOM, TouchButton, TouchLayout, ZOOM_FACTORS,
+        SLOT_KEYBOARD, SLOT_SHIFT, SLOT_STICK, SLOT_WAYPOINTS, SLOT_ZOOM, TouchButton, TouchLayout,
+        ZOOM_FACTORS,
     },
 };
 use std::cell::{Cell, RefCell};
@@ -483,6 +484,9 @@ impl Game<'_> {
         );
         self.draw_combos(batch, &layout);
         self.draw_zoom(batch, &layout);
+        let wp = layout.waypoints_button();
+        tile(batch, atlas, wp, false);
+        centred_text(batch, atlas, wp, "WP");
         self.draw_info(batch, &layout);
     }
 }
@@ -663,6 +667,13 @@ impl Game<'_> {
             }
             return true;
         }
+        // The waypoints panel takes every finger while it is open.
+        if super::waypoints::panel_is_open() {
+            if touch.phase == TouchPhase::Started {
+                self.waypoint_panel_touch(at, layout.width, layout.height);
+            }
+            return true;
+        }
         if COMBO_FINGER.get() == Some(touch.id) {
             if ended {
                 COMBO_FINGER.set(None);
@@ -690,6 +701,11 @@ impl Game<'_> {
         }
         if !self.touch_paused() && !self.ui.hide_gui && layout.combos().contains(at) {
             COMBOS_OPEN.set(true);
+            COMBO_FINGER.set(Some(touch.id));
+            return true;
+        }
+        if !self.touch_paused() && !self.ui.hide_gui && layout.waypoints_button().contains(at) {
+            self.waypoint_panel_open();
             COMBO_FINGER.set(Some(touch.id));
             return true;
         }
@@ -904,6 +920,10 @@ impl Game<'_> {
                 SLOT_COMBOS => {
                     tile(batch, atlas, r, false);
                     centred_text(batch, atlas, r, "F3");
+                }
+                SLOT_WAYPOINTS => {
+                    tile(batch, atlas, r, false);
+                    centred_text(batch, atlas, r, "WP");
                 }
                 SLOT_INFO => {
                     tile(batch, atlas, r, false);

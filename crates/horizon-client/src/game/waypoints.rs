@@ -6,8 +6,9 @@ use super::{Dim, Game};
 use horizon_client::{
     hud::{HudBatch, rgba},
     text::Text,
+    touch::Rect,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 /// Deaths kept per dimension.
@@ -48,6 +49,84 @@ struct Store {
 
 thread_local! {
     static STORE: RefCell<Store> = RefCell::new(Store::default());
+    /// The waypoints panel (the HUD button) is open, and on which page of the list.
+    static PANEL: Cell<bool> = const { Cell::new(false) };
+    static PAGE: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The panel is open: it takes every touch.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(super) fn panel_is_open() -> bool {
+    PANEL.get()
+}
+
+/// Where the panel's parts are on a screen of `w` x `h` GUI pixels.
+struct PanelRects {
+    body: Rect,
+    rows: Vec<Rect>,
+    prev: Rect,
+    next: Rect,
+    add: Rect,
+    less: Rect,
+    value: Rect,
+    more: Rect,
+    close: Rect,
+}
+
+const ROW: f32 = 17.0;
+
+fn panel_rects(w: f32, h: f32) -> PanelRects {
+    let n = (((h - 62.0) / ROW) as usize).clamp(2, 5);
+    let width = (w - 16.0).clamp(160.0, 300.0);
+    let height = 18.0 + n as f32 * ROW + 24.0;
+    let x = ((w - width) / 2.0).round();
+    let y = ((h - height) / 2.0).max(2.0).round();
+    let rows = (0..n)
+        .map(|i| Rect::new(x + 4.0, y + 18.0 + i as f32 * ROW, width - 8.0, ROW - 1.0))
+        .collect();
+    let foot = y + 18.0 + n as f32 * ROW + 3.0;
+    let unit = (width - 8.0) / 8.0;
+    PanelRects {
+        body: Rect::new(x, y, width, height),
+        rows,
+        prev: Rect::new(x + width - 44.0, y + 3.0, 19.0, 13.0),
+        next: Rect::new(x + width - 23.0, y + 3.0, 19.0, 13.0),
+        add: Rect::new(x + 4.0, foot, unit * 2.5 - 2.0, 17.0),
+        less: Rect::new(x + 4.0 + unit * 2.5, foot, unit - 2.0, 17.0),
+        value: Rect::new(x + 4.0 + unit * 3.5, foot, unit * 1.5 - 2.0, 17.0),
+        more: Rect::new(x + 4.0 + unit * 5.0, foot, unit - 2.0, 17.0),
+        close: Rect::new(x + 4.0 + unit * 6.0, foot, unit * 2.0, 17.0),
+    }
+}
+
+/// A row's parts: the colour square, the name, the distance and the delete button.
+fn row_parts(r: Rect) -> (Rect, Rect, Rect) {
+    (
+        Rect::new(r.x, r.y, 16.0, r.h),
+        Rect::new(r.x + 18.0, r.y, r.w - 18.0 - 52.0 - 18.0, r.h),
+        Rect::new(r.x + r.w - 16.0, r.y, 16.0, r.h),
+    )
+}
+
+fn button(batch: &mut HudBatch, atlas: &horizon_client::hud::HudAtlas, r: Rect, label: &str) {
+    batch.fill(atlas, r.x, r.y, r.w, r.h, rgba(90, 90, 90, 230));
+    batch.fill(
+        atlas,
+        r.x + 1.0,
+        r.y + 1.0,
+        r.w - 2.0,
+        r.h - 2.0,
+        rgba(50, 50, 50, 230),
+    );
+    let tw = HudBatch::text_width(atlas, label);
+    batch.text(
+        atlas,
+        label,
+        (r.x + (r.w - tw) / 2.0).round(),
+        (r.y + (r.h - 8.0) / 2.0).round(),
+        rgba(240, 240, 240, 255),
+        true,
+    );
 }
 
 fn dir() -> PathBuf {
@@ -360,6 +439,216 @@ impl Game<'_> {
         true
     }
 
+    /// The HUD button: opens the waypoints panel.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    pub(super) fn waypoint_panel_open(&mut self) {
+        if self.waypoint_world().is_some() {
+            PAGE.set(0);
+            PANEL.set(true);
+        }
+    }
+
+    /// A finger down while the panel is open.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    pub(super) fn waypoint_panel_touch(&mut self, at: [f32; 2], w: f32, h: f32) {
+        let Some(world) = self.waypoint_world() else {
+            PANEL.set(false);
+            return;
+        };
+        let p = panel_rects(w, h);
+        if !p.body.contains(at) {
+            PANEL.set(false);
+            return;
+        }
+        let dim = self.dim.id();
+        let here = self
+            .player
+            .as_ref()
+            .map(|q| [q.position.x, q.position.y, q.position.z].map(|v| v.floor() as i32));
+        let per = p.rows.len();
+        let mut rename: Option<usize> = None;
+        STORE.with_borrow_mut(|s| {
+            s.open(&world);
+            let mine = s.of(dim);
+            let pages = mine.len().max(1).div_ceil(per);
+            let page = PAGE.get().min(pages - 1);
+            if p.close.contains(at) {
+                PANEL.set(false);
+            } else if p.prev.contains(at) {
+                PAGE.set(page.saturating_sub(1));
+            } else if p.next.contains(at) {
+                PAGE.set((page + 1).min(pages - 1));
+            } else if p.less.contains(at) || p.more.contains(at) {
+                let step = if p.more.contains(at) { 0.1 } else { -0.1 };
+                s.opacity = (((s.opacity + step) * 10.0).round() / 10.0).clamp(0.1, 1.0);
+                s.save_opacity();
+            } else if p.add.contains(at) {
+                if let Some(pos) = here {
+                    let color = 3 + mine.iter().filter(|&&i| !s.list[i].death).count() % 7;
+                    let color = if color > 7 { color - 7 } else { color };
+                    s.list.push(Waypoint {
+                        death: false,
+                        dim: dim.to_owned(),
+                        pos,
+                        color,
+                        name: format!("Punto {}", mine.len() + 1),
+                    });
+                    s.save();
+                    // Show the page with the new one.
+                    PAGE.set(pages.max((mine.len() + 1).div_ceil(per)) - 1);
+                }
+            } else {
+                for (n, row) in p.rows.iter().enumerate() {
+                    let Some(&i) = mine.get(page * per + n) else {
+                        break;
+                    };
+                    let (swatch, name, delete) = row_parts(*row);
+                    if swatch.contains(at) {
+                        s.list[i].color = (s.list[i].color + 1) % COLORS.len();
+                        s.save();
+                    } else if delete.contains(at) {
+                        s.list.remove(i);
+                        s.save();
+                    } else if name.contains(at) {
+                        rename = Some(page * per + n + 1);
+                    }
+                }
+            }
+        });
+        // The name is typed in the chat box, which the system keyboard serves.
+        if let Some(n) = rename {
+            PANEL.set(false);
+            self.open_chat(&format!("!wp nombre {n} "));
+        }
+    }
+
+    /// The waypoints panel over a dimmed screen: this dimension's list a page at a time.
+    pub(super) fn draw_waypoint_panel(&self, batch: &mut HudBatch) {
+        if !PANEL.get() {
+            return;
+        }
+        let Some(world) = self.waypoint_world() else {
+            PANEL.set(false);
+            return;
+        };
+        let atlas = &self.gui.atlas;
+        let p = panel_rects(batch.width, batch.height);
+        let dim = self.dim.id();
+        let here = self
+            .player
+            .as_ref()
+            .map(|q| [q.position.x, q.position.y, q.position.z]);
+        let (list, opacity) = STORE.with_borrow_mut(|s| {
+            s.open(&world);
+            (
+                s.of(dim)
+                    .into_iter()
+                    .map(|i| s.list[i].clone())
+                    .collect::<Vec<_>>(),
+                s.opacity,
+            )
+        });
+        let per = p.rows.len();
+        let pages = list.len().max(1).div_ceil(per);
+        let page = PAGE.get().min(pages - 1);
+        batch.fill(
+            atlas,
+            0.0,
+            0.0,
+            batch.width,
+            batch.height,
+            rgba(0, 0, 0, 140),
+        );
+        let b = p.body;
+        batch.fill(atlas, b.x, b.y, b.w, b.h, rgba(110, 110, 110, 240));
+        batch.fill(
+            atlas,
+            b.x + 1.0,
+            b.y + 1.0,
+            b.w - 2.0,
+            b.h - 2.0,
+            rgba(28, 28, 28, 245),
+        );
+        batch.text(
+            atlas,
+            &format!("Waypoints - {} ({}/{})", dim_title(dim), page + 1, pages),
+            b.x + 5.0,
+            b.y + 5.0,
+            rgba(240, 240, 240, 255),
+            true,
+        );
+        button(batch, atlas, p.prev, "<");
+        button(batch, atlas, p.next, ">");
+        if list.is_empty() {
+            batch.text(
+                atlas,
+                "Nada aqui. Toca + Nuevo.",
+                b.x + 8.0,
+                p.rows[0].y + 4.0,
+                rgba(170, 170, 170, 255),
+                true,
+            );
+        }
+        for (n, row) in p.rows.iter().enumerate() {
+            let Some(w) = list.get(page * per + n) else {
+                break;
+            };
+            let (swatch, name, delete) = row_parts(*row);
+            batch.fill(atlas, row.x, row.y, row.w, row.h, rgba(60, 60, 60, 200));
+            let [r, g, bl] = COLORS[w.color].1;
+            batch.fill(
+                atlas,
+                swatch.x + 2.0,
+                swatch.y + 2.0,
+                swatch.w - 4.0,
+                swatch.h - 4.0,
+                rgba(r, g, bl, 255),
+            );
+            let fit = ((name.w / 6.0) as usize).max(4);
+            let shown: String = w.name.chars().take(fit).collect();
+            batch.text(
+                atlas,
+                &shown,
+                name.x + 2.0,
+                (name.y + (name.h - 8.0) / 2.0).round(),
+                rgba(r, g, bl, 255),
+                true,
+            );
+            let dist = here.map_or(String::new(), |q| {
+                let d = [
+                    f64::from(w.pos[0]) + 0.5 - q[0],
+                    f64::from(w.pos[1]) - q[1],
+                    f64::from(w.pos[2]) + 0.5 - q[2],
+                ];
+                let m = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                if m >= 1000.0 {
+                    format!("{:.1} km", m / 1000.0)
+                } else {
+                    format!("{} m", m.round() as i32)
+                }
+            });
+            batch.text(
+                atlas,
+                &dist,
+                name.x + name.w + 2.0,
+                (name.y + (name.h - 8.0) / 2.0).round(),
+                rgba(200, 200, 200, 255),
+                true,
+            );
+            button(batch, atlas, delete, "x");
+        }
+        button(batch, atlas, p.add, "+ Nuevo");
+        button(batch, atlas, p.less, "-");
+        button(
+            batch,
+            atlas,
+            p.value,
+            &format!("{}%", (opacity * 100.0).round() as i32),
+        );
+        button(batch, atlas, p.more, "+");
+        button(batch, atlas, p.close, "Cerrar");
+    }
+
     /// The markers of this dimension's waypoints over the world: a diamond, the name and the
     /// distance, projected from the camera. Not drawn over menus.
     pub(super) fn draw_waypoints(&self, batch: &mut HudBatch) {
@@ -446,6 +735,17 @@ impl Game<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_panel_fits_small_and_big_screens() {
+        for (w, h) in [(320.0, 240.0), (426.0, 196.0), (640.0, 295.0)] {
+            let p = panel_rects(w, h);
+            assert!(p.body.x >= 0.0 && p.body.x + p.body.w <= w);
+            assert!(p.body.y >= 0.0 && p.body.y + p.body.h <= h, "{w}x{h}");
+            assert!(p.close.x + p.close.w <= p.body.x + p.body.w);
+            assert!(p.rows.len() >= 2);
+        }
+    }
 
     #[test]
     fn lines_round_trip() {
