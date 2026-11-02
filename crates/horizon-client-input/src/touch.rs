@@ -112,6 +112,8 @@ pub const SLOT_CLOSE: usize = 9;
 pub const SLOT_SHIFT: usize = 10;
 pub const SLOT_KEYBOARD: usize = 11;
 pub const SLOT_STICK: usize = 12;
+/// How near (GUI pixels) a control must be to another's edge to line up with it.
+pub const ALIGN_REACH: f32 = 6.0;
 /// The F3 button that opens the debug key combinations.
 pub const SLOT_COMBOS: usize = 13;
 /// The frame rate and coordinates readout.
@@ -165,7 +167,7 @@ impl TouchLayout {
                 let close = self.base_close();
                 Rect::new(close.x - close.w - 5.0, close.y, 20.0, 20.0)
             }
-            SLOT_INFO => Rect::new(self.left, self.top + 22.0, 64.0, 42.0),
+            SLOT_INFO => Rect::new(self.left, self.top + 22.0, 64.0, 62.0),
             SLOT_COMBOS => {
                 let small = (18.0 * self.scale).round();
                 let gap = (5.0 * self.scale).round();
@@ -204,6 +206,48 @@ impl TouchLayout {
             r.w,
             r.h,
         )
+    }
+    /// Lines slot `slot` up with the controls near it: its top, middle or bottom edge with
+    /// theirs, and the same sideways, when they are within [`ALIGN_REACH`] GUI pixels. Menu
+    /// buttons only line up with each other, and the joystick with nothing.
+    pub fn align(&mut self, slot: usize) {
+        if slot >= CUSTOM_SLOTS || slot == SLOT_STICK {
+            return;
+        }
+        let menu = |n: usize| (SLOT_CLOSE..=SLOT_KEYBOARD).contains(&n);
+        let me = self.slot_rect(slot);
+        let mut best_x: Option<f32> = None;
+        let mut best_y: Option<f32> = None;
+        let closer = |best: Option<f32>, d: f32| {
+            d.abs() <= ALIGN_REACH && best.is_none_or(|b| d.abs() < b.abs())
+        };
+        for other in 0..CUSTOM_SLOTS {
+            if other == slot || other == SLOT_STICK || menu(other) != menu(slot) {
+                continue;
+            }
+            let o = self.slot_rect(other);
+            for (mine, theirs) in [
+                (me.y, o.y),
+                (me.y + me.h / 2.0, o.y + o.h / 2.0),
+                (me.y + me.h, o.y + o.h),
+            ] {
+                if closer(best_y, theirs - mine) {
+                    best_y = Some(theirs - mine);
+                }
+            }
+            for (mine, theirs) in [
+                (me.x, o.x),
+                (me.x + me.w / 2.0, o.x + o.w / 2.0),
+                (me.x + me.w, o.x + o.w),
+            ] {
+                if closer(best_x, theirs - mine) {
+                    best_x = Some(theirs - mine);
+                }
+            }
+        }
+        self.custom[slot][0] += best_x.unwrap_or(0.0);
+        self.custom[slot][1] += best_y.unwrap_or(0.0);
+        self.keep_on_screen(slot);
     }
     /// Pulls slot `slot`'s offsets back so it stays on the screen.
     pub fn keep_on_screen(&mut self, slot: usize) {
@@ -598,6 +642,11 @@ pub struct TouchSettings {
     /// The frame rate and the player's coordinates drawn over the HUD.
     pub show_fps: bool,
     pub show_coords: bool,
+    /// The coordinates also show where the player would be in the other world (Nether and
+    /// Overworld), switched by a tap on them.
+    pub coords_other: bool,
+    /// Moving a control in the layout editor lines it up with the ones near it.
+    pub align: bool,
     /// Where the player put each control and how big (TouchLayout::custom).
     pub custom: [[f32; 3]; CUSTOM_SLOTS],
 }
@@ -611,6 +660,8 @@ impl Default for TouchSettings {
             haptics: true,
             show_fps: false,
             show_coords: false,
+            coords_other: false,
+            align: false,
             custom: [NO_CUSTOM; CUSTOM_SLOTS],
         }
     }
@@ -671,6 +722,8 @@ impl TouchSettings {
                 "buttonScale" => s.button_scale = number(s.button_scale, Self::SCALE),
                 "showFps" => s.show_fps = value == "true",
                 "showCoords" => s.show_coords = value == "true",
+                "coordsOther" => s.coords_other = value == "true",
+                "align" => s.align = value == "true",
                 "haptics" => {
                     s.haptics = match value {
                         "true" => true,
@@ -685,13 +738,15 @@ impl TouchSettings {
     }
     pub fn serialize(&self) -> String {
         let mut text = format!(
-            "lookSensitivity:{}\nopacity:{}\nbuttonScale:{}\nhaptics:{}\nshowFps:{}\nshowCoords:{}\n",
+            "lookSensitivity:{}\nopacity:{}\nbuttonScale:{}\nhaptics:{}\nshowFps:{}\nshowCoords:{}\ncoordsOther:{}\nalign:{}\n",
             self.look_sensitivity,
             self.opacity,
             self.button_scale,
             self.haptics,
             self.show_fps,
-            self.show_coords
+            self.show_coords,
+            self.coords_other,
+            self.align
         );
         for (n, c) in self.custom.iter().enumerate() {
             if *c != NO_CUSTOM {
@@ -984,6 +1039,8 @@ mod tests {
             haptics: false,
             show_fps: true,
             show_coords: true,
+            coords_other: true,
+            align: true,
             custom: {
                 let mut c = [NO_CUSTOM; CUSTOM_SLOTS];
                 c[3] = [12.0, -7.5, 1.5];
@@ -1000,6 +1057,23 @@ buttonScale:0.1
         assert_eq!(wild.look_sensitivity, 3.0);
         assert_eq!(wild.opacity, 1.0);
         assert_eq!(wild.button_scale, 0.75);
+    }
+
+    #[test]
+    fn align_snaps_to_a_nearby_control() {
+        let mut l = TouchLayout::new(633.0, 293.0);
+        let pause = l.button(TouchButton::Pause);
+        let chat = TouchLayout::slot_of(TouchButton::Chat);
+        l.custom[chat][1] = 3.0;
+        assert_ne!(l.button(TouchButton::Chat).y, pause.y);
+        l.align(chat);
+        assert_eq!(l.button(TouchButton::Chat).y, pause.y);
+        // Far from everything: it stays where it is.
+        let jump = TouchLayout::slot_of(TouchButton::Jump);
+        l.custom[jump][1] = 40.0;
+        let before = l.custom[jump];
+        l.align(jump);
+        assert!(l.custom[jump][1] <= before[1] + ALIGN_REACH);
     }
 
     #[test]

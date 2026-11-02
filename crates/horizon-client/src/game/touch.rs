@@ -534,18 +534,17 @@ fn combos_panel(layout: &TouchLayout) -> Vec<(Rect, usize)> {
 }
 
 /// The editor's buttons: smaller, bigger, reset all, done; then the FPS and coordinates switches.
-fn editor_panel(layout: &TouchLayout) -> [Rect; 6] {
+fn editor_panel(layout: &TouchLayout) -> [Rect; 7] {
     let (w, h, gap) = (54.0, 20.0, 4.0);
     let left = ((layout.width - (4.0 * w + 3.0 * gap)) / 2.0).floor();
     let top = (layout.height * 0.3).floor();
-    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 6];
+    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 7];
     for (i, r) in out.iter_mut().enumerate() {
-        let (col, row) = if i < 4 {
-            (i as f32, 0.0)
-        } else {
-            ((i - 4) as f32 * 2.0, 1.0)
+        let (col, row, width) = match i {
+            0..=3 => (i as f32, 0.0, w),
+            4 | 5 => ((i - 4) as f32 * 2.0, 1.0, 2.0 * w + gap),
+            _ => (1.0, 2.0, 2.0 * w + gap),
         };
-        let width = if i < 4 { w } else { 2.0 * w + gap };
         *r = Rect::new(left + col * (w + gap), top + row * (h + gap), width, h);
     }
     out
@@ -582,6 +581,17 @@ impl Game<'_> {
         }
         if !self.touch_paused() && !self.ui.hide_gui && layout.combos().contains(at) {
             COMBOS_OPEN.set(true);
+            COMBO_FINGER.set(Some(touch.id));
+            return true;
+        }
+        // A tap on the coordinates switches the other world's equivalent on or off.
+        if !self.touch_paused()
+            && !self.ui.hide_gui
+            && self.settings.touch.show_coords
+            && layout.slot_rect(SLOT_INFO).contains(at)
+        {
+            self.settings.touch.coords_other = !self.settings.touch.coords_other;
+            self.settings.save(&Self::options_path());
             COMBO_FINGER.set(Some(touch.id));
             return true;
         }
@@ -643,6 +653,7 @@ impl Game<'_> {
                         2 => self.settings.touch.custom = [NO_CUSTOM; CUSTOM_SLOTS],
                         4 => self.settings.touch.show_fps = !self.settings.touch.show_fps,
                         5 => self.settings.touch.show_coords = !self.settings.touch.show_coords,
+                        6 => self.settings.touch.align = !self.settings.touch.align,
                         _ => {
                             EDIT.set(false);
                             DRAG.set(None);
@@ -672,6 +683,12 @@ impl Game<'_> {
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
                 if DRAG.get().is_some_and(|(id, _)| id == touch.id) {
+                    if self.settings.touch.align {
+                        let slot = SELECTED.get().min(CUSTOM_SLOTS - 1);
+                        let mut aligned = *layout;
+                        aligned.align(slot);
+                        self.settings.touch.custom[slot] = aligned.custom[slot];
+                    }
                     DRAG.set(None);
                 }
             }
@@ -764,6 +781,7 @@ impl Game<'_> {
             "Listo".to_owned(),
             format!("FPS: {}", yes_no(self.settings.touch.show_fps)),
             format!("Coordenadas: {}", yes_no(self.settings.touch.show_coords)),
+            format!("Alinear: {}", yes_no(self.settings.touch.align)),
         ];
         for (rect, label) in panel.iter().zip(labels.iter()) {
             tile(batch, atlas, *rect, false);
@@ -814,6 +832,18 @@ impl Game<'_> {
             lines.push(format!("X {:.1}", p[0]));
             lines.push(format!("Y {:.1}", p[1]));
             lines.push(format!("Z {:.1}", p[2]));
+            // The same place in the other world: the Nether is eight times smaller.
+            if !sample && t.coords_other {
+                let (name, k) = match self.dim {
+                    super::Dim::Overworld => ("Nether", 0.125),
+                    super::Dim::Nether => ("Overworld", 8.0),
+                    super::Dim::End => ("", 0.0),
+                };
+                if k != 0.0 {
+                    lines.push(format!("{name} X {:.1}", p[0] * k));
+                    lines.push(format!("{name} Z {:.1}", p[2] * k));
+                }
+            }
         }
         for (n, line) in lines.iter().enumerate() {
             batch.text(
