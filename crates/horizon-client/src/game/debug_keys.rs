@@ -530,7 +530,7 @@ impl Game<'_> {
         on
     }
     /// One matching mapping of `handleDebugKeys`; whether it counts.
-    fn run_debug_action(&mut self, action: DebugAction, shift: bool) -> bool {
+    pub(super) fn run_debug_action(&mut self, action: DebugAction, shift: bool) -> bool {
         let player = self.player.is_some() && !self.reduced_debug_info();
         match action {
             DebugAction::ReloadChunks => {
