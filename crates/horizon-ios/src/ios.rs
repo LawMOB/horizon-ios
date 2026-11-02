@@ -5,7 +5,23 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_foundation::{MainThreadMarker, NSDictionary, NSString, NSURL};
 use objc2_game_controller::{
-    GCController, GCControllerButtonInput, GCControllerDirectionPad, GCDevice,
+    GCController, GCControllerButtonInput, GCControllerDirectionPad, GCDevice, GCKeyCodeBackslash,
+    GCKeyCodeCapsLock, GCKeyCodeCloseBracket, GCKeyCodeComma, GCKeyCodeDeleteForward,
+    GCKeyCodeDeleteOrBackspace, GCKeyCodeDownArrow, GCKeyCodeEight, GCKeyCodeEnd,
+    GCKeyCodeEqualSign, GCKeyCodeEscape, GCKeyCodeF1, GCKeyCodeF2, GCKeyCodeF3, GCKeyCodeF4,
+    GCKeyCodeF5, GCKeyCodeF6, GCKeyCodeF7, GCKeyCodeF8, GCKeyCodeF9, GCKeyCodeF10, GCKeyCodeF11,
+    GCKeyCodeF12, GCKeyCodeFive, GCKeyCodeFour, GCKeyCodeGraveAccentAndTilde, GCKeyCodeHome,
+    GCKeyCodeHyphen, GCKeyCodeInsert, GCKeyCodeKeyA, GCKeyCodeKeyB, GCKeyCodeKeyC, GCKeyCodeKeyD,
+    GCKeyCodeKeyE, GCKeyCodeKeyF, GCKeyCodeKeyG, GCKeyCodeKeyH, GCKeyCodeKeyI, GCKeyCodeKeyJ,
+    GCKeyCodeKeyK, GCKeyCodeKeyL, GCKeyCodeKeyM, GCKeyCodeKeyN, GCKeyCodeKeyO, GCKeyCodeKeyP,
+    GCKeyCodeKeyQ, GCKeyCodeKeyR, GCKeyCodeKeyS, GCKeyCodeKeyT, GCKeyCodeKeyU, GCKeyCodeKeyV,
+    GCKeyCodeKeyW, GCKeyCodeKeyX, GCKeyCodeKeyY, GCKeyCodeKeyZ, GCKeyCodeLeftAlt,
+    GCKeyCodeLeftArrow, GCKeyCodeLeftControl, GCKeyCodeLeftShift, GCKeyCodeNine, GCKeyCodeOne,
+    GCKeyCodeOpenBracket, GCKeyCodePageDown, GCKeyCodePageUp, GCKeyCodePeriod, GCKeyCodeQuote,
+    GCKeyCodeReturnOrEnter, GCKeyCodeRightAlt, GCKeyCodeRightArrow, GCKeyCodeRightControl,
+    GCKeyCodeRightShift, GCKeyCodeSemicolon, GCKeyCodeSeven, GCKeyCodeSix, GCKeyCodeSlash,
+    GCKeyCodeSpacebar, GCKeyCodeTab, GCKeyCodeThree, GCKeyCodeTwo, GCKeyCodeUpArrow, GCKeyCodeZero,
+    GCKeyboard,
 };
 use objc2_ui_kit::{
     UIAlertAction, UIAlertActionStyle, UIAlertController, UIAlertControllerStyle, UIApplication,

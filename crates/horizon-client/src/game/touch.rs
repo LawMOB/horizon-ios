@@ -12,7 +12,7 @@ use horizon_client::{
         SLOT_KEYBOARD, SLOT_SHIFT, SLOT_STICK, SLOT_ZOOM, TouchButton, TouchLayout, ZOOM_FACTORS,
     },
 };
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
@@ -201,6 +201,7 @@ impl Game<'_> {
         if !self.touch_slots() {
             self.pad.touch_shift = false;
         }
+        self.hardware_keyboard();
         let actions = self.pad.menu_touch.poll(Instant::now(), self.touch_slots());
         self.menu_actions(event_loop, actions);
         let typing = self.text_input_active();
@@ -487,6 +488,8 @@ impl Game<'_> {
 }
 
 thread_local! {
+    /// The keys of a hardware keyboard held at the last poll.
+    static KEYS_DOWN: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     /// The layout editor is open, the control it works on, and the finger dragging it.
     static EDIT: Cell<bool> = const { Cell::new(false) };
     static SELECTED: Cell<usize> = const { Cell::new(0) };
@@ -559,6 +562,83 @@ fn editor_panel(layout: &TouchLayout) -> [Rect; 10] {
 }
 
 impl Game<'_> {
+    /// A hardware keyboard (USB or Bluetooth): winit gives iOS apps only typed text, so the keys
+    /// are read from GameController and sent where a PC's keyboard events go, as the default key
+    /// of their binding. While a text field has focus the characters arrive as text, so only
+    /// Escape is taken from here.
+    fn hardware_keyboard(&mut self) {
+        let now = horizon_ios::keyboard().unwrap_or_default();
+        let before = KEYS_DOWN.with(|k| k.borrow().clone());
+        if now == before {
+            return;
+        }
+        KEYS_DOWN.with(|k| *k.borrow_mut() = now.clone());
+        let typing = self.text_input_active();
+        let playing = self.title.is_none() && self.player.is_some() && !self.dialog_open();
+        for name in before.iter().filter(|n| !now.contains(n)) {
+            if let Some(key) = horizon_client::keybinds::key_code(name) {
+                self.hardware_key(key, false);
+            }
+        }
+        for name in now.iter().filter(|n| !before.contains(n)) {
+            let Some(key) = horizon_client::keybinds::key_code(name) else {
+                continue;
+            };
+            if key == KeyCode::Escape && (typing || self.touch_close_shown()) {
+                if let Err(e) = self.touch_back() {
+                    self.error = Some(e);
+                }
+            } else if playing && !typing {
+                self.hardware_key(key, true);
+            }
+        }
+    }
+
+    /// One key of a hardware keyboard going down or up, as the PC's keyboard handling does:
+    /// the debug keys first (F3 and its combinations), then the key binds.
+    fn hardware_key(&mut self, key: KeyCode, pressed: bool) {
+        use horizon_client::debug_keys::KeyAction;
+        if pressed {
+            self.physical_keys.insert(key);
+        } else {
+            self.physical_keys.remove(&key);
+        }
+        self.last_input = Instant::now();
+        let action = if pressed {
+            KeyAction::Press
+        } else {
+            KeyAction::Release
+        };
+        if self.debug_key(key, action) {
+            return;
+        }
+        let result = if key == KeyCode::Escape {
+            if pressed {
+                self.key_pressed(key)
+            } else {
+                Ok(())
+            }
+        } else {
+            let mut result = Ok(());
+            for mapped in self.settings.keys.translate_all(key) {
+                result = match mapped {
+                    Ok(k) => self.mapped_key(k, pressed, false),
+                    Err(button) if self.screen == Screen::Playing => {
+                        self.play_mouse(button, pressed)
+                    }
+                    Err(_) => Ok(()),
+                };
+                if result.is_err() {
+                    break;
+                }
+            }
+            result
+        };
+        if let Err(e) = result {
+            self.error = Some(e);
+        }
+    }
+
     /// The F3 button and its list of debug key combinations (a finger on either is theirs).
     fn combos_touch(&mut self, touch: &Touch, at: [f32; 2], layout: &TouchLayout) -> bool {
         let ended = matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled);

@@ -79,3 +79,12 @@ pub fn controller() -> Option<(PadState, GlyphStyle)> {
     #[cfg(not(target_os = "ios"))]
     None
 }
+
+/// The keys held on a hardware keyboard (USB or Bluetooth), by the names the game's key bindings
+/// use (`key.keyboard.w`); `None` when no keyboard is connected.
+pub fn keyboard() -> Option<Vec<&'static str>> {
+    #[cfg(target_os = "ios")]
+    return ios::keyboard();
+    #[cfg(not(target_os = "ios"))]
+    None
+}

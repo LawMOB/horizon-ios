@@ -33,6 +33,9 @@ objc2-game-controller = { version = "0.2.2", features = [
     "GCControllerButtonInput",
     "GCControllerAxisInput",
     "GCControllerDirectionPad",
+    "GCKeyboard",
+    "GCKeyboardInput",
+    "GCKeyCodes",
 ] }
 
 [lints]
