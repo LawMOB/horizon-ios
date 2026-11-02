@@ -921,6 +921,8 @@ enum Act {
     OpenModFolder,
     /// The Microsoft account screen (iOS, where there is no launcher).
     Account,
+    /// The touch controls' layout editor (iOS).
+    EditTouchLayout,
     /// Credits & Attribution's Credits button (WinScreen without the poem).
     Credits,
     CopyAgentDetails,
@@ -973,6 +975,8 @@ pub enum Event {
     OpenModFolder,
     /// Open the Microsoft account screen (iOS).
     Account,
+    /// Open the touch controls' layout editor (iOS).
+    EditTouchLayout,
     /// The Shader Packs page opened: list `shaderpacks/` into `shader_packs`.
     ListShaderPacks,
     /// A shader pack was picked or turned off: save and apply it.
@@ -1546,12 +1550,25 @@ impl OptionsUi {
                 }
                 self.filter_option_rows(rows)
             }
-            Page::Touch => pairs(&[
-                Opt::TouchLookSensitivity,
-                Opt::TouchButtonScale,
-                Opt::TouchOpacity,
-                Opt::TouchHaptics,
-            ]),
+            Page::Touch => {
+                let mut rows = pairs(&[
+                    Opt::TouchLookSensitivity,
+                    Opt::TouchButtonScale,
+                    Opt::TouchOpacity,
+                    Opt::TouchHaptics,
+                ]);
+                rows.push(Row::Buttons(
+                    button(
+                        0.0,
+                        0.0,
+                        310.0,
+                        Text::literal("Edit Layout..."),
+                        Act::EditTouchLayout,
+                    ),
+                    None,
+                ));
+                rows
+            }
             Page::Controller => {
                 let mut rows = vec![Row::Buttons(
                     button(
@@ -2699,6 +2716,7 @@ impl OptionsUi {
                         Act::NativeButton(i, b) => events.push(Event::NativeButton(i, b)),
                         Act::OpenModFolder => events.push(Event::OpenModFolder),
                         Act::Account => events.push(Event::Account),
+                        Act::EditTouchLayout => events.push(Event::EditTouchLayout),
                         Act::PickShaderPack(i) => {
                             if let Some(pack) = s.shader_packs.get(i) {
                                 s.horizon.shader_pack = if s.horizon.shader_pack == pack.file {
