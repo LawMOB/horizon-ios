@@ -83,7 +83,10 @@ impl Game<'_> {
         let Some((at, layout)) = self.touch_gui(&touch) else {
             return;
         };
-        if self.layout_edit_touch(&touch, at, &layout) || self.combos_touch(&touch, at, &layout) {
+        if self.layout_edit_touch(&touch, at, &layout)
+            || self.mouse_touch(&touch)
+            || self.combos_touch(&touch, at, &layout)
+        {
             return;
         }
         let now = Instant::now();
@@ -202,6 +205,7 @@ impl Game<'_> {
             self.pad.touch_shift = false;
         }
         self.hardware_keyboard();
+        self.hardware_mouse();
         let actions = self.pad.menu_touch.poll(Instant::now(), self.touch_slots());
         self.menu_actions(event_loop, actions);
         let typing = self.text_input_active();
@@ -414,6 +418,10 @@ impl Game<'_> {
             }
             return;
         }
+        if self.touch_hidden() {
+            self.draw_info(batch, &layout);
+            return;
+        }
         let controls = &self.pad.touch;
         let sneaking = self.keys.contains(&KeyCode::ShiftLeft);
         let fly = controls.descend;
@@ -488,6 +496,11 @@ impl Game<'_> {
 }
 
 thread_local! {
+    /// A hardware mouse is connected, the buttons of it held at the last poll, and the finger of
+    /// a pointer click (iOS sends clicks as touches too) being ignored.
+    static MOUSE_ON: Cell<bool> = const { Cell::new(false) };
+    static MOUSE_BTN: Cell<[bool; 3]> = const { Cell::new([false; 3]) };
+    static MOUSE_FINGER: Cell<Option<u64>> = const { Cell::new(None) };
     /// The keys of a hardware keyboard held at the last poll.
     static KEYS_DOWN: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
     /// The layout editor is open, the control it works on, and the finger dragging it.
@@ -542,17 +555,18 @@ fn combos_panel(layout: &TouchLayout) -> Vec<(Rect, usize)> {
 }
 
 /// The editor's buttons: smaller, bigger, reset all, done; then the FPS and coordinates switches.
-fn editor_panel(layout: &TouchLayout) -> [Rect; 10] {
-    let (w, h, gap) = (54.0, 20.0, 4.0);
+fn editor_panel(layout: &TouchLayout) -> [Rect; 11] {
+    let (w, h, gap) = (54.0, 18.0, 3.0);
     let left = ((layout.width - (4.0 * w + 3.0 * gap)) / 2.0).floor();
     let top = (layout.height * 0.16).floor().max(28.0);
-    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 10];
+    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 11];
     for (i, r) in out.iter_mut().enumerate() {
         let (col, row, width) = match i {
             0..=3 => (i as f32, 0.0, w),
             4 | 5 => ((i - 4) as f32 * 2.0, 1.0, 2.0 * w + gap),
             6 => (0.0, 2.0, 2.0 * w + gap),
             9 => (2.0, 2.0, 2.0 * w + gap),
+            10 => (1.0, 4.0, 2.0 * w + gap),
             7 => (0.0, 3.0, 2.0 * w + gap),
             _ => (2.0, 3.0, 2.0 * w + gap),
         };
@@ -562,6 +576,64 @@ fn editor_panel(layout: &TouchLayout) -> [Rect; 10] {
 }
 
 impl Game<'_> {
+    /// The touch controls are hidden: a hardware mouse is connected and the player chose that.
+    fn touch_hidden(&self) -> bool {
+        self.settings.touch.hide_with_mouse && MOUSE_ON.get()
+    }
+
+    /// With the controls hidden, the mouse acts through GameController, and the same clicks
+    /// reach the game as touches: they are ignored while playing, until lifted.
+    fn mouse_touch(&mut self, touch: &Touch) -> bool {
+        if MOUSE_FINGER.get() == Some(touch.id) {
+            if matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                MOUSE_FINGER.set(None);
+            }
+            return true;
+        }
+        if touch.phase == TouchPhase::Started && self.touch_hidden() && !self.touch_paused() {
+            MOUSE_FINGER.set(Some(touch.id));
+            return true;
+        }
+        false
+    }
+
+    /// A hardware mouse (USB or Bluetooth), read through GameController: its movement turns the
+    /// view, its buttons attack, use and pick, its wheel changes the hotbar slot. In menus its
+    /// clicks come as touches.
+    fn hardware_mouse(&mut self) {
+        let state = horizon_ios::mouse();
+        MOUSE_ON.set(state.is_some());
+        let held = MOUSE_BTN.get();
+        let playing =
+            !self.touch_paused() && self.title.is_none() && self.screen == Screen::Playing;
+        let m = state.unwrap_or_default();
+        let down = if playing { m.buttons } else { [false; 3] };
+        if playing {
+            if m.moved != [0.0; 2] {
+                let k = 2.0 * f64::from(self.settings.touch.look_sensitivity);
+                self.mouse
+                    .add_motion(f64::from(m.moved[0]) * k, f64::from(m.moved[1]) * k);
+            }
+            if m.scroll != 0.0 {
+                let step = if m.scroll > 0.0 { -1 } else { 1 };
+                let next = (self.selected as i32 + step).rem_euclid(9);
+                self.selected = next as _;
+            }
+        }
+        for (n, button) in [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+            .into_iter()
+            .enumerate()
+        {
+            if down[n] != held[n]
+                && self.screen == Screen::Playing
+                && let Err(e) = self.play_mouse(button, down[n])
+            {
+                self.error = Some(e);
+            }
+        }
+        MOUSE_BTN.set(down);
+    }
+
     /// A hardware keyboard (USB or Bluetooth): winit gives iOS apps only typed text, so the keys
     /// are read from GameController and sent where a PC's keyboard events go, as the default key
     /// of their binding. While a text field has focus the characters arrive as text, so only
@@ -813,6 +885,10 @@ impl Game<'_> {
                         7 => self.change_zoom_level(-1),
                         8 => self.change_zoom_level(1),
                         9 => self.settings.touch.zoom_toggle = !self.settings.touch.zoom_toggle,
+                        10 => {
+                            self.settings.touch.hide_with_mouse =
+                                !self.settings.touch.hide_with_mouse
+                        }
                         3 => {
                             EDIT.set(false);
                             DRAG.set(None);
@@ -955,6 +1031,10 @@ impl Game<'_> {
                 } else {
                     "Mantener"
                 }
+            ),
+            format!(
+                "Ocultar c/mouse: {}",
+                yes_no(self.settings.touch.hide_with_mouse)
             ),
         ];
         for (rect, label) in panel.iter().zip(labels.iter()) {

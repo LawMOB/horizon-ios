@@ -668,6 +668,8 @@ pub struct TouchSettings {
     pub zoom_level: u8,
     /// The zoom button toggles instead of zooming while it is held.
     pub zoom_toggle: bool,
+    /// The touch controls hide while a hardware mouse is connected.
+    pub hide_with_mouse: bool,
     /// Where the player put each control and how big (TouchLayout::custom).
     pub custom: [[f32; 3]; CUSTOM_SLOTS],
 }
@@ -685,6 +687,7 @@ impl Default for TouchSettings {
             align: false,
             zoom_level: 2,
             zoom_toggle: false,
+            hide_with_mouse: true,
             custom: [NO_CUSTOM; CUSTOM_SLOTS],
         }
     }
@@ -748,6 +751,7 @@ impl TouchSettings {
                 "coordsOther" => s.coords_other = value == "true",
                 "align" => s.align = value == "true",
                 "zoomToggle" => s.zoom_toggle = value == "true",
+                "hideWithMouse" => s.hide_with_mouse = value == "true",
                 "zoomLevel" => {
                     s.zoom_level = value
                         .parse::<u8>()
@@ -778,8 +782,8 @@ impl TouchSettings {
             self.align
         );
         text.push_str(&format!(
-            "zoomLevel:{}\nzoomToggle:{}\n",
-            self.zoom_level, self.zoom_toggle
+            "zoomLevel:{}\nzoomToggle:{}\nhideWithMouse:{}\n",
+            self.zoom_level, self.zoom_toggle, self.hide_with_mouse
         ));
         for (n, c) in self.custom.iter().enumerate() {
             if *c != NO_CUSTOM {
@@ -1076,6 +1080,7 @@ mod tests {
             align: true,
             zoom_level: 4,
             zoom_toggle: true,
+            hide_with_mouse: false,
             custom: {
                 let mut c = [NO_CUSTOM; CUSTOM_SLOTS];
                 c[3] = [12.0, -7.5, 1.5];
