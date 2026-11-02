@@ -99,7 +99,27 @@ pub struct TouchLayout {
     pub top: f32,
     /// The buttons' size, 1 being Bedrock's.
     pub scale: f32,
+    /// The player's own placement of each control (see [`CUSTOM_SLOTS`]): x and y offsets in GUI
+    /// pixels, then a size multiplier.
+    pub custom: [[f32; 3]; CUSTOM_SLOTS],
 }
+
+/// Controls the player can move and resize: the nine buttons (in [`TouchButton::ALL`]'s order),
+/// then close, Shift, hide keyboard, the joystick and the F3 combinations button.
+pub const CUSTOM_SLOTS: usize = 15;
+/// The slot of the close button, Shift toggle, keyboard button and joystick.
+pub const SLOT_CLOSE: usize = 9;
+pub const SLOT_SHIFT: usize = 10;
+pub const SLOT_KEYBOARD: usize = 11;
+pub const SLOT_STICK: usize = 12;
+/// The F3 button that opens the debug key combinations.
+pub const SLOT_COMBOS: usize = 13;
+/// The frame rate and coordinates readout.
+pub const SLOT_INFO: usize = 14;
+/// A control left alone: no offset, its normal size.
+pub const NO_CUSTOM: [f32; 3] = [0.0, 0.0, 1.0];
+/// The size multiplier a control may be given.
+pub const CUSTOM_SIZE: (f32, f32) = (0.5, 2.5);
 
 impl TouchLayout {
     /// A phone's layout without its real safe area: an iPhone's notch is about 36 GUI pixels.
@@ -117,6 +137,80 @@ impl TouchLayout {
             right: right.max(8.0),
             top: top.max(0.0) + 4.0,
             scale,
+            custom: [NO_CUSTOM; CUSTOM_SLOTS],
+        }
+    }
+    /// The same layout with the player's placements.
+    pub fn with_custom(mut self, custom: [[f32; 3]; CUSTOM_SLOTS]) -> Self {
+        self.custom = custom;
+        self
+    }
+    /// The slot of a button in [`Self::custom`].
+    pub fn slot_of(button: TouchButton) -> usize {
+        TouchButton::ALL
+            .iter()
+            .position(|b| *b == button)
+            .unwrap_or(0)
+    }
+    /// Where slot `slot` is without the player's placement.
+    pub fn slot_base(&self, slot: usize) -> Rect {
+        match slot {
+            0..=8 => self.base_button(TouchButton::ALL[slot]),
+            SLOT_CLOSE => self.base_close(),
+            SLOT_SHIFT => {
+                let close = self.base_close();
+                Rect::new(close.x, close.y + close.h + 5.0, 20.0, 20.0)
+            }
+            SLOT_KEYBOARD => {
+                let close = self.base_close();
+                Rect::new(close.x - close.w - 5.0, close.y, 20.0, 20.0)
+            }
+            SLOT_INFO => Rect::new(self.left, self.top + 22.0, 64.0, 42.0),
+            SLOT_COMBOS => {
+                let small = (18.0 * self.scale).round();
+                let gap = (5.0 * self.scale).round();
+                Rect::new(
+                    self.width - self.right - small - 3.0 * (small + gap),
+                    self.top,
+                    small,
+                    small,
+                )
+            }
+            _ => {
+                let r = STICK_RADIUS * self.scale + 4.0;
+                let c = self.base_rest();
+                Rect::new(c[0] - r, c[1] - r, 2.0 * r, 2.0 * r)
+            }
+        }
+    }
+    /// Slot `slot` with the player's placement, not yet kept on the screen.
+    pub fn slot_raw(&self, slot: usize) -> Rect {
+        let base = self.slot_base(slot);
+        let [dx, dy, k] = self.custom.get(slot).copied().unwrap_or(NO_CUSTOM);
+        let (w, h) = (base.w * k, base.h * k);
+        Rect::new(
+            base.x + (base.w - w) / 2.0 + dx,
+            base.y + (base.h - h) / 2.0 + dy,
+            w,
+            h,
+        )
+    }
+    /// Slot `slot` as it is drawn and touched: placed by the player, kept on the screen.
+    pub fn slot_rect(&self, slot: usize) -> Rect {
+        let r = self.slot_raw(slot);
+        Rect::new(
+            r.x.clamp(0.0, (self.width - r.w).max(0.0)),
+            r.y.clamp(0.0, (self.height - r.h).max(0.0)),
+            r.w,
+            r.h,
+        )
+    }
+    /// Pulls slot `slot`'s offsets back so it stays on the screen.
+    pub fn keep_on_screen(&mut self, slot: usize) {
+        if slot < CUSTOM_SLOTS {
+            let (raw, kept) = (self.slot_raw(slot), self.slot_rect(slot));
+            self.custom[slot][0] += kept.x - raw.x;
+            self.custom[slot][1] += kept.y - raw.y;
         }
     }
     /// Hotbar slot `n` (0..9), as vanilla draws the bar: 182x22 centred at the bottom.
@@ -127,6 +221,9 @@ impl TouchLayout {
     /// Bedrock's layout: jump on the right with sneak under it and sprint to its left, the
     /// small chat, perspective and pause buttons along the top, "..." at the hotbar's end.
     pub fn button(&self, button: TouchButton) -> Rect {
+        self.slot_rect(Self::slot_of(button))
+    }
+    fn base_button(&self, button: TouchButton) -> Rect {
         let (w, h, k) = (self.width, self.height, self.scale);
         let big = (30.0 * k).round();
         let small = (18.0 * k).round();
@@ -160,7 +257,7 @@ impl TouchLayout {
     }
     /// The joystick's reach from where the thumb landed.
     pub fn stick_radius(&self) -> f32 {
-        STICK_RADIUS * self.scale
+        STICK_RADIUS * self.scale * self.custom[SLOT_STICK][2]
     }
     /// Where a thumb starts the joystick: the left part of the screen, below the top.
     pub fn joystick_zone(&self) -> Rect {
@@ -169,23 +266,32 @@ impl TouchLayout {
     }
     /// The joystick's centre while no thumb is on it.
     pub fn joystick_rest(&self) -> [f32; 2] {
-        let r = self.stick_radius();
+        let r = self.slot_rect(SLOT_STICK);
+        [r.x + r.w / 2.0, r.y + r.h / 2.0]
+    }
+    fn base_rest(&self) -> [f32; 2] {
+        let r = STICK_RADIUS * self.scale;
         [self.left + r + 14.0, self.height - r - 30.0]
     }
     /// The close button over menus (Escape), top right.
     pub fn close(&self) -> Rect {
+        self.slot_rect(SLOT_CLOSE)
+    }
+    fn base_close(&self) -> Rect {
         Rect::new(self.width - self.right - 20.0, self.top, 20.0, 20.0)
+    }
+    /// The F3 button, left of the perspective button: opens the debug key combinations.
+    pub fn combos(&self) -> Rect {
+        self.slot_rect(SLOT_COMBOS)
     }
     /// The button that hides the system keyboard, left of the close button: the iPhone's
     /// keyboard has no key of its own for it.
     pub fn keyboard_hide(&self) -> Rect {
-        let close = self.close();
-        Rect::new(close.x - close.w - 5.0, close.y, 20.0, 20.0)
+        self.slot_rect(SLOT_KEYBOARD)
     }
     /// The Shift toggle under it in inventories: taps quick-move while it is on.
     pub fn shift(&self) -> Rect {
-        let close = self.close();
-        Rect::new(close.x, close.y + close.h + 5.0, 20.0, 20.0)
+        self.slot_rect(SLOT_SHIFT)
     }
 }
 
@@ -489,6 +595,11 @@ pub struct TouchSettings {
     pub button_scale: f32,
     /// A tap of the haptic engine when a block breaks or the player is hurt.
     pub haptics: bool,
+    /// The frame rate and the player's coordinates drawn over the HUD.
+    pub show_fps: bool,
+    pub show_coords: bool,
+    /// Where the player put each control and how big (TouchLayout::custom).
+    pub custom: [[f32; 3]; CUSTOM_SLOTS],
 }
 
 impl Default for TouchSettings {
@@ -498,6 +609,9 @@ impl Default for TouchSettings {
             opacity: 1.0,
             button_scale: 1.0,
             haptics: true,
+            show_fps: false,
+            show_coords: false,
+            custom: [NO_CUSTOM; CUSTOM_SLOTS],
         }
     }
 }
@@ -533,10 +647,30 @@ impl TouchSettings {
                     .filter(|v| v.is_finite())
                     .map_or(d, |v| v.clamp(lo, hi))
             };
+            if let Some(n) = key.trim().strip_prefix("slot")
+                && let Ok(n) = n.parse::<usize>()
+                && n < CUSTOM_SLOTS
+            {
+                let v: Vec<f32> = value
+                    .split(',')
+                    .filter_map(|p| p.trim().parse::<f32>().ok())
+                    .filter(|v| v.is_finite())
+                    .collect();
+                if v.len() == 3 {
+                    s.custom[n] = [
+                        v[0].clamp(-4000.0, 4000.0),
+                        v[1].clamp(-4000.0, 4000.0),
+                        v[2].clamp(CUSTOM_SIZE.0, CUSTOM_SIZE.1),
+                    ];
+                }
+                continue;
+            }
             match key.trim() {
                 "lookSensitivity" => s.look_sensitivity = number(s.look_sensitivity, Self::LOOK),
                 "opacity" => s.opacity = number(s.opacity, Self::OPACITY),
                 "buttonScale" => s.button_scale = number(s.button_scale, Self::SCALE),
+                "showFps" => s.show_fps = value == "true",
+                "showCoords" => s.show_coords = value == "true",
                 "haptics" => {
                     s.haptics = match value {
                         "true" => true,
@@ -550,10 +684,21 @@ impl TouchSettings {
         s
     }
     pub fn serialize(&self) -> String {
-        format!(
-            "lookSensitivity:{}\nopacity:{}\nbuttonScale:{}\nhaptics:{}\n",
-            self.look_sensitivity, self.opacity, self.button_scale, self.haptics
-        )
+        let mut text = format!(
+            "lookSensitivity:{}\nopacity:{}\nbuttonScale:{}\nhaptics:{}\nshowFps:{}\nshowCoords:{}\n",
+            self.look_sensitivity,
+            self.opacity,
+            self.button_scale,
+            self.haptics,
+            self.show_fps,
+            self.show_coords
+        );
+        for (n, c) in self.custom.iter().enumerate() {
+            if *c != NO_CUSTOM {
+                text.push_str(&format!("slot{n}:{},{},{}\n", c[0], c[1], c[2]));
+            }
+        }
+        text
     }
 }
 
@@ -837,6 +982,13 @@ mod tests {
             opacity: 0.5,
             button_scale: 1.25,
             haptics: false,
+            show_fps: true,
+            show_coords: true,
+            custom: {
+                let mut c = [NO_CUSTOM; CUSTOM_SLOTS];
+                c[3] = [12.0, -7.5, 1.5];
+                c
+            },
         };
         assert_eq!(TouchSettings::parse(&s.serialize()), s);
         let wild = TouchSettings::parse(
