@@ -89,6 +89,8 @@ pub struct MouseState {
     pub scroll: f32,
     /// Left, right and middle buttons held.
     pub buttons: [bool; 3],
+    /// How many movement and scroll reports it has made since it was found.
+    pub events: u32,
 }
 
 /// The hardware mouse (USB or Bluetooth), if one is connected.

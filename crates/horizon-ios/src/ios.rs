@@ -30,7 +30,7 @@ use objc2_ui_kit::{
 };
 use std::cell::RefCell;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 pub fn open_url(url: &str) -> bool {
     let Some(mtm) = MainThreadMarker::new() else {
@@ -193,6 +193,8 @@ pub fn keyboard() -> Option<Vec<&'static str>> {
 static MOUSE_DX: AtomicI32 = AtomicI32::new(0);
 static MOUSE_DY: AtomicI32 = AtomicI32::new(0);
 static MOUSE_SCROLL: AtomicI32 = AtomicI32::new(0);
+/// How many times the handlers have been called, to tell whether the mouse reports at all.
+static MOUSE_EVENTS: AtomicU32 = AtomicU32::new(0);
 
 type MovedBlock = RcBlock<dyn Fn(NonNull<GCMouseInput>, f32, f32)>;
 type ScrollBlock = RcBlock<dyn Fn(NonNull<GCControllerAxisInput>, f32)>;
@@ -221,10 +223,12 @@ pub fn mouse() -> Option<crate::MouseState> {
                     RcBlock::new(|_: NonNull<GCMouseInput>, dx: f32, dy: f32| {
                         MOUSE_DX.fetch_add((dx * 1000.0) as i32, Ordering::Relaxed);
                         MOUSE_DY.fetch_add((dy * 1000.0) as i32, Ordering::Relaxed);
+                        MOUSE_EVENTS.fetch_add(1, Ordering::Relaxed);
                     });
                 let scrolled: ScrollBlock =
                     RcBlock::new(|_: NonNull<GCControllerAxisInput>, value: f32| {
                         MOUSE_SCROLL.fetch_add((value * 1000.0) as i32, Ordering::Relaxed);
+                        MOUSE_EVENTS.fetch_add(1, Ordering::Relaxed);
                     });
                 input.setMouseMovedHandler(&*moved as *const _ as *mut _);
                 input
@@ -243,6 +247,7 @@ pub fn mouse() -> Option<crate::MouseState> {
                 MOUSE_DY.swap(0, Ordering::Relaxed) as f32 / 1000.0,
             ],
             scroll: MOUSE_SCROLL.swap(0, Ordering::Relaxed) as f32 / 1000.0,
+            events: MOUSE_EVENTS.load(Ordering::Relaxed),
             buttons: [
                 down(Some(input.leftButton())),
                 down(input.rightButton()),
