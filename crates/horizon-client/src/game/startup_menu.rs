@@ -369,6 +369,7 @@ impl Loading {
                 }
                 // The account screen needs the game: its options open once it has loaded.
                 Event::Account => {}
+                Event::EditTouchLayout => {}
                 Event::ListShaderPacks => {
                     self.settings.shader_packs =
                         horizon_client::shader_pack_list::scan(&Game::shader_packs_dir());
