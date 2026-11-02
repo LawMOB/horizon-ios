@@ -269,7 +269,7 @@ impl Game<'_> {
             return PadState::default();
         }
         let entity = self.entity_targeted();
-        self.pad.touch.use_shown = entity;
+        self.pad.touch.use_shown = true;
         // Bedrock's fly and swim down: Sneak descends while held.
         self.pad.touch.descend = self
             .player
@@ -424,6 +424,17 @@ impl Game<'_> {
                     batch.text(
                         atlas,
                         "Use",
+                        (r.x + (r.w - w) / 2.0).round(),
+                        (r.y + (r.h - 8.0) / 2.0).round(),
+                        white(),
+                        true,
+                    );
+                }
+                TouchButton::Swap => {
+                    let w = HudBatch::text_width(atlas, "F");
+                    batch.text(
+                        atlas,
+                        "F",
                         (r.x + (r.w - w) / 2.0).round(),
                         (r.y + (r.h - 8.0) / 2.0).round(),
                         white(),
