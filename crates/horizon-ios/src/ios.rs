@@ -80,6 +80,111 @@ pub fn haptic(strength: f32) {
     });
 }
 
+/// The keys held on a hardware keyboard (USB or Bluetooth), by the names `key.keyboard.*` the
+/// game's key bindings use; none when no keyboard is connected.
+pub fn keyboard() -> Option<Vec<&'static str>> {
+    // Safety: GameController's polling getters are safe to call from the main thread, which the
+    // game's loop is; the key code constants are read-only statics.
+    unsafe {
+        let keyboard = GCKeyboard::coalescedKeyboard()?;
+        let input = keyboard.keyboardInput()?;
+        let table = [
+            (GCKeyCodeKeyA, "key.keyboard.a"),
+            (GCKeyCodeKeyB, "key.keyboard.b"),
+            (GCKeyCodeKeyC, "key.keyboard.c"),
+            (GCKeyCodeKeyD, "key.keyboard.d"),
+            (GCKeyCodeKeyE, "key.keyboard.e"),
+            (GCKeyCodeKeyF, "key.keyboard.f"),
+            (GCKeyCodeKeyG, "key.keyboard.g"),
+            (GCKeyCodeKeyH, "key.keyboard.h"),
+            (GCKeyCodeKeyI, "key.keyboard.i"),
+            (GCKeyCodeKeyJ, "key.keyboard.j"),
+            (GCKeyCodeKeyK, "key.keyboard.k"),
+            (GCKeyCodeKeyL, "key.keyboard.l"),
+            (GCKeyCodeKeyM, "key.keyboard.m"),
+            (GCKeyCodeKeyN, "key.keyboard.n"),
+            (GCKeyCodeKeyO, "key.keyboard.o"),
+            (GCKeyCodeKeyP, "key.keyboard.p"),
+            (GCKeyCodeKeyQ, "key.keyboard.q"),
+            (GCKeyCodeKeyR, "key.keyboard.r"),
+            (GCKeyCodeKeyS, "key.keyboard.s"),
+            (GCKeyCodeKeyT, "key.keyboard.t"),
+            (GCKeyCodeKeyU, "key.keyboard.u"),
+            (GCKeyCodeKeyV, "key.keyboard.v"),
+            (GCKeyCodeKeyW, "key.keyboard.w"),
+            (GCKeyCodeKeyX, "key.keyboard.x"),
+            (GCKeyCodeKeyY, "key.keyboard.y"),
+            (GCKeyCodeKeyZ, "key.keyboard.z"),
+            (GCKeyCodeOne, "key.keyboard.1"),
+            (GCKeyCodeTwo, "key.keyboard.2"),
+            (GCKeyCodeThree, "key.keyboard.3"),
+            (GCKeyCodeFour, "key.keyboard.4"),
+            (GCKeyCodeFive, "key.keyboard.5"),
+            (GCKeyCodeSix, "key.keyboard.6"),
+            (GCKeyCodeSeven, "key.keyboard.7"),
+            (GCKeyCodeEight, "key.keyboard.8"),
+            (GCKeyCodeNine, "key.keyboard.9"),
+            (GCKeyCodeZero, "key.keyboard.0"),
+            (GCKeyCodeReturnOrEnter, "key.keyboard.enter"),
+            (GCKeyCodeEscape, "key.keyboard.escape"),
+            (GCKeyCodeDeleteOrBackspace, "key.keyboard.backspace"),
+            (GCKeyCodeTab, "key.keyboard.tab"),
+            (GCKeyCodeSpacebar, "key.keyboard.space"),
+            (GCKeyCodeHyphen, "key.keyboard.minus"),
+            (GCKeyCodeEqualSign, "key.keyboard.equal"),
+            (GCKeyCodeOpenBracket, "key.keyboard.left.bracket"),
+            (GCKeyCodeCloseBracket, "key.keyboard.right.bracket"),
+            (GCKeyCodeBackslash, "key.keyboard.backslash"),
+            (GCKeyCodeSemicolon, "key.keyboard.semicolon"),
+            (GCKeyCodeQuote, "key.keyboard.apostrophe"),
+            (GCKeyCodeGraveAccentAndTilde, "key.keyboard.grave.accent"),
+            (GCKeyCodeComma, "key.keyboard.comma"),
+            (GCKeyCodePeriod, "key.keyboard.period"),
+            (GCKeyCodeSlash, "key.keyboard.slash"),
+            (GCKeyCodeCapsLock, "key.keyboard.caps.lock"),
+            (GCKeyCodeHome, "key.keyboard.home"),
+            (GCKeyCodeEnd, "key.keyboard.end"),
+            (GCKeyCodePageUp, "key.keyboard.page.up"),
+            (GCKeyCodePageDown, "key.keyboard.page.down"),
+            (GCKeyCodeDeleteForward, "key.keyboard.delete"),
+            (GCKeyCodeInsert, "key.keyboard.insert"),
+            (GCKeyCodeUpArrow, "key.keyboard.up"),
+            (GCKeyCodeDownArrow, "key.keyboard.down"),
+            (GCKeyCodeLeftArrow, "key.keyboard.left"),
+            (GCKeyCodeRightArrow, "key.keyboard.right"),
+            (GCKeyCodeLeftControl, "key.keyboard.left.control"),
+            (GCKeyCodeRightControl, "key.keyboard.right.control"),
+            (GCKeyCodeLeftShift, "key.keyboard.left.shift"),
+            (GCKeyCodeRightShift, "key.keyboard.right.shift"),
+            (GCKeyCodeLeftAlt, "key.keyboard.left.alt"),
+            (GCKeyCodeRightAlt, "key.keyboard.right.alt"),
+            (GCKeyCodeF1, "key.keyboard.f1"),
+            (GCKeyCodeF2, "key.keyboard.f2"),
+            (GCKeyCodeF3, "key.keyboard.f3"),
+            (GCKeyCodeF4, "key.keyboard.f4"),
+            (GCKeyCodeF5, "key.keyboard.f5"),
+            (GCKeyCodeF6, "key.keyboard.f6"),
+            (GCKeyCodeF7, "key.keyboard.f7"),
+            (GCKeyCodeF8, "key.keyboard.f8"),
+            (GCKeyCodeF9, "key.keyboard.f9"),
+            (GCKeyCodeF10, "key.keyboard.f10"),
+            (GCKeyCodeF11, "key.keyboard.f11"),
+            (GCKeyCodeF12, "key.keyboard.f12"),
+        ];
+        Some(
+            table
+                .into_iter()
+                .filter(|(code, _)| {
+                    input
+                        .buttonForKeyCode(*code)
+                        .is_some_and(|button| button.isPressed())
+                })
+                .map(|(_, name)| name)
+                .collect(),
+        )
+    }
+}
+
 pub fn alert(
     view_controller: Option<std::ptr::NonNull<std::ffi::c_void>>,
     title: &str,
