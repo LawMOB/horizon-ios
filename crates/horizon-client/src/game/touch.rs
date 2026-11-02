@@ -3,10 +3,14 @@
 //! for text fields, and saving when the app goes to the background.
 use super::{Game, Screen};
 use horizon_client::{
+    debug_keys::DebugAction,
     gamepad::{Button, PadState},
     hud::{HudAtlas, HudBatch, rgba},
     osk::Output,
-    touch::{MenuAction, Rect, TouchButton, TouchLayout},
+    touch::{
+        CUSTOM_SIZE, CUSTOM_SLOTS, MenuAction, NO_CUSTOM, Rect, SLOT_CLOSE, SLOT_COMBOS, SLOT_INFO,
+        SLOT_KEYBOARD, SLOT_SHIFT, SLOT_STICK, TouchButton, TouchLayout,
+    },
 };
 use std::cell::Cell;
 use std::time::Instant;
@@ -61,6 +65,7 @@ impl Game<'_> {
             insets.unwrap_or([36.0, 0.0, 36.0]),
             self.settings.touch.button_scale,
         )
+        .with_custom(self.settings.touch.custom)
     }
 
     fn touch_gui(&self, touch: &Touch) -> Option<([f32; 2], TouchLayout)> {
@@ -78,6 +83,9 @@ impl Game<'_> {
         let Some((at, layout)) = self.touch_gui(&touch) else {
             return;
         };
+        if self.layout_edit_touch(&touch, at, &layout) || self.combos_touch(&touch, at, &layout) {
+            return;
+        }
         let now = Instant::now();
         self.last_input = now;
         self.pad.touch_device = Some(touch.device_id);
@@ -382,6 +390,11 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         let layout = self.touch_layout(batch);
         OPACITY.set(self.settings.touch.opacity);
+        if EDIT.get() {
+            OPACITY.set(1.0);
+            self.draw_layout_editor(batch, &layout);
+            return;
+        }
         if self.pad.keyboard_shown {
             let hide = layout.keyboard_hide();
             tile(batch, atlas, hide, false);
@@ -456,7 +469,7 @@ impl Game<'_> {
             Rect::new(origin[0] - half, origin[1] - half, 2.0 * half, 2.0 * half),
             rgba(30, 30, 30, if active { 110 } else { 70 }),
         );
-        let knob = (18.0 * layout.scale).round();
+        let knob = (18.0 * layout.stick_radius() / 26.0).round();
         let (kx, ky) = (
             origin[0] + tilt[0] * radius - knob / 2.0,
             origin[1] - tilt[1] * radius - knob / 2.0,
@@ -467,7 +480,364 @@ impl Game<'_> {
             Rect::new(kx, ky, knob, knob),
             rgba(160, 160, 160, if active { 200 } else { 120 }),
         );
+        self.draw_combos(batch, &layout);
+        self.draw_info(batch, &layout);
     }
+}
+
+thread_local! {
+    /// The layout editor is open, the control it works on, and the finger dragging it.
+    static EDIT: Cell<bool> = const { Cell::new(false) };
+    static SELECTED: Cell<usize> = const { Cell::new(0) };
+    static DRAG: Cell<Option<(u64, [f32; 2])>> = const { Cell::new(None) };
+    /// The F3 combinations list is open, and the finger that last touched it.
+    static COMBOS_OPEN: Cell<bool> = const { Cell::new(false) };
+    static COMBO_FINGER: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// The debug key combinations (F3 + the key shown), `None` being F3 alone.
+const COMBOS: [(&str, Option<DebugAction>); 17] = [
+    ("F3 Pantalla debug", None),
+    ("A Recargar chunks", Some(DebugAction::ReloadChunks)),
+    ("B Hitboxes", Some(DebugAction::ShowHitboxes)),
+    ("C Copiar posicion", Some(DebugAction::CopyLocation)),
+    ("D Limpiar chat", Some(DebugAction::ClearChat)),
+    ("G Bordes de chunk", Some(DebugAction::ShowChunkBorders)),
+    ("H Tooltips extra", Some(DebugAction::AdvancedTooltips)),
+    ("I Copiar comando", Some(DebugAction::CopyRecreateCommand)),
+    ("N Espectador", Some(DebugAction::Spectate)),
+    ("F4 Cambiar modo", Some(DebugAction::SwitchGameMode)),
+    ("P Pausa sin foco", Some(DebugAction::FocusPause)),
+    ("T Recargar packs", Some(DebugAction::ReloadResourcePacks)),
+    ("V Version", Some(DebugAction::DumpVersion)),
+    ("X Transparencia", Some(DebugAction::ImprovedTransparency)),
+    ("2 Graficas FPS", Some(DebugAction::FpsCharts)),
+    ("3 Graficas red", Some(DebugAction::NetworkCharts)),
+    ("4 Lightmap", Some(DebugAction::LightmapTexture)),
+];
+
+/// The list's entries, two columns, centred.
+fn combos_panel(layout: &TouchLayout) -> Vec<(Rect, usize)> {
+    let (cw, ch, gap) = (104.0, 15.0, 3.0);
+    let rows = COMBOS.len().div_ceil(2) as f32;
+    let left = ((layout.width - (2.0 * cw + gap)) / 2.0).floor();
+    let top = ((layout.height - rows * ch) / 2.0).floor().max(2.0);
+    (0..COMBOS.len())
+        .map(|i| {
+            let (col, row) = ((i % 2) as f32, (i / 2) as f32);
+            (
+                Rect::new(left + col * (cw + gap), top + row * ch, cw, ch - 1.0),
+                i,
+            )
+        })
+        .collect()
+}
+
+/// The editor's buttons: smaller, bigger, reset all, done; then the FPS and coordinates switches.
+fn editor_panel(layout: &TouchLayout) -> [Rect; 6] {
+    let (w, h, gap) = (54.0, 20.0, 4.0);
+    let left = ((layout.width - (4.0 * w + 3.0 * gap)) / 2.0).floor();
+    let top = (layout.height * 0.3).floor();
+    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 6];
+    for (i, r) in out.iter_mut().enumerate() {
+        let (col, row) = if i < 4 {
+            (i as f32, 0.0)
+        } else {
+            ((i - 4) as f32 * 2.0, 1.0)
+        };
+        let width = if i < 4 { w } else { 2.0 * w + gap };
+        *r = Rect::new(left + col * (w + gap), top + row * (h + gap), width, h);
+    }
+    out
+}
+
+impl Game<'_> {
+    /// The F3 button and its list of debug key combinations (a finger on either is theirs).
+    fn combos_touch(&mut self, touch: &Touch, at: [f32; 2], layout: &TouchLayout) -> bool {
+        let ended = matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled);
+        if COMBO_FINGER.get() == Some(touch.id) {
+            if ended {
+                COMBO_FINGER.set(None);
+            }
+            return true;
+        }
+        if touch.phase != TouchPhase::Started {
+            return false;
+        }
+        if COMBOS_OPEN.get() {
+            COMBOS_OPEN.set(false);
+            COMBO_FINGER.set(Some(touch.id));
+            if let Some((_, i)) = combos_panel(layout)
+                .into_iter()
+                .find(|(r, _)| r.contains(at))
+            {
+                match COMBOS[i].1 {
+                    None => self.debug = !self.debug,
+                    Some(action) => {
+                        let _ = self.run_debug_action(action, false);
+                    }
+                }
+            }
+            return true;
+        }
+        if !self.touch_paused() && !self.ui.hide_gui && layout.combos().contains(at) {
+            COMBOS_OPEN.set(true);
+            COMBO_FINGER.set(Some(touch.id));
+            return true;
+        }
+        false
+    }
+
+    fn draw_combos(&self, batch: &mut HudBatch, layout: &TouchLayout) {
+        let atlas = &self.gui.atlas;
+        let open = COMBOS_OPEN.get();
+        let r = layout.combos();
+        tile(batch, atlas, r, open);
+        centred_text(batch, atlas, r, "F3");
+        if open {
+            OPACITY.set(1.0);
+            batch.fill(
+                atlas,
+                0.0,
+                0.0,
+                layout.width,
+                layout.height,
+                rgba(0, 0, 0, 140),
+            );
+            for (r, i) in combos_panel(layout) {
+                tile(batch, atlas, r, false);
+                batch.text(
+                    atlas,
+                    COMBOS[i].0,
+                    r.x + 4.0,
+                    (r.y + (r.h - 8.0) / 2.0).round(),
+                    white(),
+                    true,
+                );
+            }
+        }
+    }
+
+    /// Options > Touch Controls > Edit Layout.
+    pub(super) fn begin_layout_edit(&mut self) {
+        EDIT.set(true);
+        SELECTED.set(0);
+        DRAG.set(None);
+        COMBOS_OPEN.set(false);
+        self.pad.touch.release_all();
+    }
+
+    /// A finger while the editor is open: it takes every touch. A control is chosen and dragged;
+    /// the buttons make it smaller or bigger, reset all, or finish.
+    fn layout_edit_touch(&mut self, touch: &Touch, at: [f32; 2], layout: &TouchLayout) -> bool {
+        if !EDIT.get() {
+            return false;
+        }
+        match touch.phase {
+            TouchPhase::Started => {
+                let panel = editor_panel(layout);
+                if let Some(i) = panel.iter().position(|r| r.contains(at)) {
+                    match i {
+                        0 => self.edit_resize(layout, -0.1),
+                        1 => self.edit_resize(layout, 0.1),
+                        2 => self.settings.touch.custom = [NO_CUSTOM; CUSTOM_SLOTS],
+                        4 => self.settings.touch.show_fps = !self.settings.touch.show_fps,
+                        5 => self.settings.touch.show_coords = !self.settings.touch.show_coords,
+                        _ => {
+                            EDIT.set(false);
+                            DRAG.set(None);
+                            self.settings.save(&Self::options_path());
+                        }
+                    }
+                } else if let Some(slot) = (0..CUSTOM_SLOTS)
+                    .rev()
+                    .find(|&n| layout.slot_rect(n).contains(at))
+                {
+                    SELECTED.set(slot);
+                    DRAG.set(Some((touch.id, at)));
+                }
+            }
+            TouchPhase::Moved => {
+                if let Some((id, last)) = DRAG.get()
+                    && id == touch.id
+                {
+                    let slot = SELECTED.get();
+                    let mut moved = *layout;
+                    moved.custom[slot][0] += at[0] - last[0];
+                    moved.custom[slot][1] += at[1] - last[1];
+                    moved.keep_on_screen(slot);
+                    self.settings.touch.custom[slot] = moved.custom[slot];
+                    DRAG.set(Some((id, at)));
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                if DRAG.get().is_some_and(|(id, _)| id == touch.id) {
+                    DRAG.set(None);
+                }
+            }
+        }
+        true
+    }
+
+    fn edit_resize(&mut self, layout: &TouchLayout, step: f32) {
+        let slot = SELECTED.get();
+        let mut sized = *layout;
+        sized.custom[slot][2] = (sized.custom[slot][2] + step).clamp(CUSTOM_SIZE.0, CUSTOM_SIZE.1);
+        sized.keep_on_screen(slot);
+        self.settings.touch.custom[slot] = sized.custom[slot];
+    }
+
+    /// Every control where it is, the chosen one outlined, over a dimmed screen.
+    fn draw_layout_editor(&self, batch: &mut HudBatch, layout: &TouchLayout) {
+        let atlas = &self.gui.atlas;
+        batch.fill(
+            atlas,
+            0.0,
+            0.0,
+            layout.width,
+            layout.height,
+            rgba(0, 0, 0, 170),
+        );
+        for slot in 0..CUSTOM_SLOTS {
+            let r = layout.slot_rect(slot);
+            match slot {
+                SLOT_STICK => {
+                    rounded(batch, atlas, r, rgba(30, 30, 30, 140));
+                    let knob = (18.0 * layout.stick_radius() / 26.0).round();
+                    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+                    rounded(
+                        batch,
+                        atlas,
+                        Rect::new(cx - knob / 2.0, cy - knob / 2.0, knob, knob),
+                        rgba(160, 160, 160, 200),
+                    );
+                }
+                SLOT_CLOSE => {
+                    tile(batch, atlas, r, false);
+                    cross(batch, atlas, r);
+                }
+                SLOT_SHIFT => {
+                    tile(batch, atlas, r, false);
+                    arrow(batch, atlas, r, true, true);
+                }
+                SLOT_KEYBOARD => {
+                    tile(batch, atlas, r, false);
+                    keyboard_down(batch, atlas, r);
+                }
+                SLOT_COMBOS => {
+                    tile(batch, atlas, r, false);
+                    centred_text(batch, atlas, r, "F3");
+                }
+                SLOT_INFO => {
+                    tile(batch, atlas, r, false);
+                    self.info_text(batch, r, true);
+                }
+                n => {
+                    tile(batch, atlas, r, false);
+                    match TouchButton::ALL[n] {
+                        TouchButton::Jump => arrow(batch, atlas, r, true, true),
+                        TouchButton::Sneak => arrow(batch, atlas, r, false, true),
+                        TouchButton::Sprint => chevrons(batch, atlas, r),
+                        TouchButton::Inventory => dots(batch, atlas, r),
+                        TouchButton::Chat => bubble(batch, atlas, r),
+                        TouchButton::Perspective => eye(batch, atlas, r),
+                        TouchButton::Pause => bars(batch, atlas, r),
+                        TouchButton::Use => centred_text(batch, atlas, r, "Use"),
+                        TouchButton::Swap => centred_text(batch, atlas, r, "F"),
+                    }
+                }
+            }
+        }
+        // The chosen control, outlined in yellow.
+        let r = layout.slot_rect(SELECTED.get().min(CUSTOM_SLOTS - 1));
+        let yellow = rgba(255, 220, 60, 255);
+        batch.fill(atlas, r.x - 1.0, r.y - 1.0, r.w + 2.0, 1.0, yellow);
+        batch.fill(atlas, r.x - 1.0, r.y + r.h, r.w + 2.0, 1.0, yellow);
+        batch.fill(atlas, r.x - 1.0, r.y, 1.0, r.h, yellow);
+        batch.fill(atlas, r.x + r.w, r.y, 1.0, r.h, yellow);
+        let panel = editor_panel(layout);
+        let yes_no = |on: bool| if on { "Si" } else { "No" };
+        let labels = [
+            "-".to_owned(),
+            "+".to_owned(),
+            "Reiniciar".to_owned(),
+            "Listo".to_owned(),
+            format!("FPS: {}", yes_no(self.settings.touch.show_fps)),
+            format!("Coordenadas: {}", yes_no(self.settings.touch.show_coords)),
+        ];
+        for (rect, label) in panel.iter().zip(labels.iter()) {
+            tile(batch, atlas, *rect, false);
+            centred_text(batch, atlas, *rect, label);
+        }
+        for (n, line) in [
+            "Arrastra un control para moverlo",
+            "Toca uno y usa - / + para su tamano",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let w = HudBatch::text_width(atlas, line);
+            batch.text(
+                atlas,
+                line,
+                ((layout.width - w) / 2.0).round(),
+                panel[0].y - 24.0 + n as f32 * 11.0,
+                white(),
+                true,
+            );
+        }
+    }
+}
+
+impl Game<'_> {
+    /// The FPS and coordinates the player switched on, where they put them. `sample` draws all
+    /// lines (the editor), else only the switched-on ones.
+    fn draw_info(&self, batch: &mut HudBatch, layout: &TouchLayout) {
+        let t = &self.settings.touch;
+        if (t.show_fps || t.show_coords) && !self.touch_paused() {
+            self.info_text(batch, layout.slot_rect(SLOT_INFO), false);
+        }
+    }
+
+    fn info_text(&self, batch: &mut HudBatch, r: Rect, sample: bool) {
+        let atlas = &self.gui.atlas;
+        let t = &self.settings.touch;
+        let mut lines = Vec::new();
+        if sample || t.show_fps {
+            lines.push(format!("{} FPS", self.fps.round() as i32));
+        }
+        if sample || t.show_coords {
+            let p = self
+                .player
+                .as_ref()
+                .map_or([0.0; 3], |p| [p.position.x, p.position.y, p.position.z]);
+            lines.push(format!("X {:.1}", p[0]));
+            lines.push(format!("Y {:.1}", p[1]));
+            lines.push(format!("Z {:.1}", p[2]));
+        }
+        for (n, line) in lines.iter().enumerate() {
+            batch.text(
+                atlas,
+                line,
+                r.x + 3.0,
+                (r.y + 3.0 + n as f32 * 10.0).round(),
+                white(),
+                true,
+            );
+        }
+    }
+}
+
+fn centred_text(batch: &mut HudBatch, atlas: &HudAtlas, r: Rect, text: &str) {
+    let w = HudBatch::text_width(atlas, text);
+    batch.text(
+        atlas,
+        text,
+        (r.x + (r.w - w) / 2.0).round(),
+        (r.y + (r.h - 8.0) / 2.0).round(),
+        white(),
+        true,
+    );
 }
 
 const WHITE: u32 = 0xe6ff_ffff;
