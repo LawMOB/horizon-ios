@@ -499,9 +499,6 @@ thread_local! {
     /// A hardware mouse is connected, the buttons of it held at the last poll, and the finger of
     /// a pointer click (iOS sends clicks as touches too) being ignored.
     static MOUSE_ON: Cell<bool> = const { Cell::new(false) };
-    /// A mouse is connected (whether or not it has reported anything yet), and how many reports.
-    static MOUSE_FOUND: Cell<bool> = const { Cell::new(false) };
-    static MOUSE_EVENTS: Cell<u32> = const { Cell::new(0) };
     static MOUSE_BTN: Cell<[bool; 3]> = const { Cell::new([false; 3]) };
     static MOUSE_FINGER: Cell<Option<u64>> = const { Cell::new(None) };
     /// The keys of a hardware keyboard held at the last poll.
@@ -605,12 +602,7 @@ impl Game<'_> {
     /// clicks come as touches.
     fn hardware_mouse(&mut self) {
         let state = horizon_ios::mouse();
-        MOUSE_FOUND.set(state.is_some());
-        MOUSE_EVENTS.set(state.map_or(0, |m| m.events));
-        // The controls hide only once the mouse has really reported something, so a mouse the
-        // system lists but gives the app nothing from doesn't leave the player without controls.
-        let active = state.is_some_and(|m| m.events > 0 || m.buttons != [false; 3]);
-        MOUSE_ON.set(active || (MOUSE_ON.get() && state.is_some()));
+        MOUSE_ON.set(state.is_some());
         let held = MOUSE_BTN.get();
         let playing =
             !self.touch_paused() && self.title.is_none() && self.screen == Screen::Playing;
@@ -1074,7 +1066,7 @@ impl Game<'_> {
     /// lines (the editor), else only the switched-on ones.
     fn draw_info(&self, batch: &mut HudBatch, layout: &TouchLayout) {
         let t = &self.settings.touch;
-        if (t.show_fps || t.show_coords || MOUSE_FOUND.get()) && !self.touch_paused() {
+        if (t.show_fps || t.show_coords) && !self.touch_paused() {
             self.info_text(batch, layout.slot_rect(SLOT_INFO), false);
         }
     }
@@ -1092,11 +1084,6 @@ impl Game<'_> {
             super::Dim::End => (purple, None),
         };
         let mut lines: Vec<(String, u32)> = Vec::new();
-        // While a mouse is connected: how many reports it has made (zero means iOS gives the
-        // app nothing from it).
-        if MOUSE_FOUND.get() && !sample {
-            lines.push((format!("Mouse {}", MOUSE_EVENTS.get()), white()));
-        }
         if sample || t.show_fps {
             lines.push((format!("{} FPS", self.fps.round() as i32), white()));
         }
