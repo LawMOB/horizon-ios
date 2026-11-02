@@ -212,12 +212,24 @@ impl Game<'_> {
     /// A mod's zoom in effect (`render.set-zoom`): (factor, smooth, turning
     /// scale); none is 1.
     fn zoom_now(&self) -> (f32, bool, f64) {
+        if let Some(factor) = self.touch_zoom() {
+            return (factor, true, 1.0 / f64::from(factor));
+        }
         if let Some(z) = self.native_zoom_now() {
             return (z.factor, z.smooth, f64::from(z.turn));
         }
         self.mod_zoom().map_or((1.0, true, 1.0), |z| {
             (z.factor, z.smooth, f64::from(z.turn))
         })
+    }
+    /// The touch zoom button's magnification while it is on (iOS).
+    #[cfg(target_os = "ios")]
+    fn touch_zoom(&self) -> Option<f32> {
+        self.touch_zoom_factor()
+    }
+    #[cfg(not(target_os = "ios"))]
+    fn touch_zoom(&self) -> Option<f32> {
+        None
     }
     /// The field-of-view modifier target, divided by a smooth zoom.
     pub(super) fn zoomed_fov_target(&self, vanilla: f32) -> f32 {

@@ -9,7 +9,7 @@ use horizon_client::{
     osk::Output,
     touch::{
         CUSTOM_SIZE, CUSTOM_SLOTS, MenuAction, NO_CUSTOM, Rect, SLOT_CLOSE, SLOT_COMBOS, SLOT_INFO,
-        SLOT_KEYBOARD, SLOT_SHIFT, SLOT_STICK, TouchButton, TouchLayout,
+        SLOT_KEYBOARD, SLOT_SHIFT, SLOT_STICK, SLOT_ZOOM, TouchButton, TouchLayout, ZOOM_FACTORS,
     },
 };
 use std::cell::Cell;
@@ -481,6 +481,7 @@ impl Game<'_> {
             rgba(160, 160, 160, if active { 200 } else { 120 }),
         );
         self.draw_combos(batch, &layout);
+        self.draw_zoom(batch, &layout);
         self.draw_info(batch, &layout);
     }
 }
@@ -493,6 +494,10 @@ thread_local! {
     /// The F3 combinations list is open, and the finger that last touched it.
     static COMBOS_OPEN: Cell<bool> = const { Cell::new(false) };
     static COMBO_FINGER: Cell<Option<u64>> = const { Cell::new(None) };
+    /// The zoom button is on, the finger on it, and where that finger last changed the level.
+    static ZOOM_ON: Cell<bool> = const { Cell::new(false) };
+    static ZOOM_FINGER: Cell<Option<u64>> = const { Cell::new(None) };
+    static ZOOM_Y: Cell<f32> = const { Cell::new(0.0) };
 }
 
 /// The debug key combinations (F3 + the key shown), `None` being F3 alone.
@@ -534,16 +539,19 @@ fn combos_panel(layout: &TouchLayout) -> Vec<(Rect, usize)> {
 }
 
 /// The editor's buttons: smaller, bigger, reset all, done; then the FPS and coordinates switches.
-fn editor_panel(layout: &TouchLayout) -> [Rect; 7] {
+fn editor_panel(layout: &TouchLayout) -> [Rect; 10] {
     let (w, h, gap) = (54.0, 20.0, 4.0);
     let left = ((layout.width - (4.0 * w + 3.0 * gap)) / 2.0).floor();
-    let top = (layout.height * 0.3).floor();
-    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 7];
+    let top = (layout.height * 0.16).floor().max(28.0);
+    let mut out = [Rect::new(0.0, 0.0, 0.0, 0.0); 10];
     for (i, r) in out.iter_mut().enumerate() {
         let (col, row, width) = match i {
             0..=3 => (i as f32, 0.0, w),
             4 | 5 => ((i - 4) as f32 * 2.0, 1.0, 2.0 * w + gap),
-            _ => (1.0, 2.0, 2.0 * w + gap),
+            6 => (0.0, 2.0, 2.0 * w + gap),
+            9 => (2.0, 2.0, 2.0 * w + gap),
+            7 => (0.0, 3.0, 2.0 * w + gap),
+            _ => (2.0, 3.0, 2.0 * w + gap),
         };
         *r = Rect::new(left + col * (w + gap), top + row * (h + gap), width, h);
     }
@@ -554,6 +562,27 @@ impl Game<'_> {
     /// The F3 button and its list of debug key combinations (a finger on either is theirs).
     fn combos_touch(&mut self, touch: &Touch, at: [f32; 2], layout: &TouchLayout) -> bool {
         let ended = matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled);
+        if ZOOM_FINGER.get() == Some(touch.id) {
+            match touch.phase {
+                // Sliding up or down on the button changes the magnification.
+                TouchPhase::Moved => {
+                    let dy = ZOOM_Y.get() - at[1];
+                    if dy.abs() >= 12.0 {
+                        self.change_zoom_level(if dy > 0.0 { 1 } else { -1 });
+                        ZOOM_Y.set(at[1]);
+                    }
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    ZOOM_FINGER.set(None);
+                    if !self.settings.touch.zoom_toggle {
+                        ZOOM_ON.set(false);
+                    }
+                    self.settings.save(&Self::options_path());
+                }
+                TouchPhase::Started => {}
+            }
+            return true;
+        }
         if COMBO_FINGER.get() == Some(touch.id) {
             if ended {
                 COMBO_FINGER.set(None);
@@ -584,6 +613,13 @@ impl Game<'_> {
             COMBO_FINGER.set(Some(touch.id));
             return true;
         }
+        if !self.touch_paused() && !self.ui.hide_gui && layout.zoom_button().contains(at) {
+            let on = !self.settings.touch.zoom_toggle || !ZOOM_ON.get();
+            ZOOM_ON.set(on);
+            ZOOM_FINGER.set(Some(touch.id));
+            ZOOM_Y.set(at[1]);
+            return true;
+        }
         // A tap on the coordinates switches the other world's equivalent on or off.
         if !self.touch_paused()
             && !self.ui.hide_gui
@@ -596,6 +632,46 @@ impl Game<'_> {
             return true;
         }
         false
+    }
+
+    /// The zoom button's magnification as the settings have it (2, 3, 4, 6, 8 or 10).
+    fn zoom_factor_setting(&self) -> i32 {
+        let level = usize::from(self.settings.touch.zoom_level).min(ZOOM_FACTORS.len() - 1);
+        ZOOM_FACTORS[level] as i32
+    }
+
+    /// One level more (or less) magnification, kept within the table.
+    fn change_zoom_level(&mut self, step: i32) {
+        let level = i32::from(self.settings.touch.zoom_level) + step;
+        self.settings.touch.zoom_level = level.clamp(0, ZOOM_FACTORS.len() as i32 - 1) as u8;
+    }
+
+    /// The zoom in effect while the button is held (or switched on), if any.
+    pub(super) fn touch_zoom_factor(&self) -> Option<f32> {
+        if !ZOOM_ON.get() || self.touch_paused() {
+            return None;
+        }
+        if !self.settings.touch.zoom_toggle && ZOOM_FINGER.get().is_none() {
+            return None;
+        }
+        let level = usize::from(self.settings.touch.zoom_level).min(ZOOM_FACTORS.len() - 1);
+        Some(ZOOM_FACTORS[level])
+    }
+
+    fn draw_zoom(&self, batch: &mut HudBatch, layout: &TouchLayout) {
+        let r = layout.zoom_button();
+        tile(
+            batch,
+            &self.gui.atlas,
+            r,
+            self.touch_zoom_factor().is_some(),
+        );
+        centred_text(
+            batch,
+            &self.gui.atlas,
+            r,
+            &format!("x{}", self.zoom_factor_setting()),
+        );
     }
 
     fn draw_combos(&self, batch: &mut HudBatch, layout: &TouchLayout) {
@@ -654,11 +730,15 @@ impl Game<'_> {
                         4 => self.settings.touch.show_fps = !self.settings.touch.show_fps,
                         5 => self.settings.touch.show_coords = !self.settings.touch.show_coords,
                         6 => self.settings.touch.align = !self.settings.touch.align,
-                        _ => {
+                        7 => self.change_zoom_level(-1),
+                        8 => self.change_zoom_level(1),
+                        9 => self.settings.touch.zoom_toggle = !self.settings.touch.zoom_toggle,
+                        3 => {
                             EDIT.set(false);
                             DRAG.set(None);
                             self.settings.save(&Self::options_path());
                         }
+                        _ => {}
                     }
                 } else if let Some(slot) = (0..CUSTOM_SLOTS)
                     .rev()
@@ -749,6 +829,10 @@ impl Game<'_> {
                     tile(batch, atlas, r, false);
                     self.info_text(batch, r, true);
                 }
+                SLOT_ZOOM => {
+                    tile(batch, atlas, r, false);
+                    centred_text(batch, atlas, r, &format!("x{}", self.zoom_factor_setting()));
+                }
                 n => {
                     tile(batch, atlas, r, false);
                     match TouchButton::ALL[n] {
@@ -782,6 +866,16 @@ impl Game<'_> {
             format!("FPS: {}", yes_no(self.settings.touch.show_fps)),
             format!("Coordenadas: {}", yes_no(self.settings.touch.show_coords)),
             format!("Alinear: {}", yes_no(self.settings.touch.align)),
+            format!("Zoom - (x{})", self.zoom_factor_setting()),
+            format!("Zoom + (x{})", self.zoom_factor_setting()),
+            format!(
+                "Zoom: {}",
+                if self.settings.touch.zoom_toggle {
+                    "Alternar"
+                } else {
+                    "Mantener"
+                }
+            ),
         ];
         for (rect, label) in panel.iter().zip(labels.iter()) {
             tile(batch, atlas, *rect, false);
@@ -820,38 +914,43 @@ impl Game<'_> {
     fn info_text(&self, batch: &mut HudBatch, r: Rect, sample: bool) {
         let atlas = &self.gui.atlas;
         let t = &self.settings.touch;
-        let mut lines = Vec::new();
+        // Each world has its colour: the Overworld green, the Nether red-orange, the End purple.
+        let green = rgba(110, 230, 110, 240);
+        let orange = rgba(255, 110, 60, 240);
+        let purple = rgba(200, 130, 255, 240);
+        let (own, other) = match self.dim {
+            super::Dim::Overworld => (green, Some(("Nether", 0.125, orange))),
+            super::Dim::Nether => (orange, Some(("Overworld", 8.0, green))),
+            super::Dim::End => (purple, None),
+        };
+        let mut lines: Vec<(String, u32)> = Vec::new();
         if sample || t.show_fps {
-            lines.push(format!("{} FPS", self.fps.round() as i32));
+            lines.push((format!("{} FPS", self.fps.round() as i32), white()));
         }
         if sample || t.show_coords {
             let p = self
                 .player
                 .as_ref()
                 .map_or([0.0; 3], |p| [p.position.x, p.position.y, p.position.z]);
-            lines.push(format!("X {:.1}", p[0]));
-            lines.push(format!("Y {:.1}", p[1]));
-            lines.push(format!("Z {:.1}", p[2]));
+            lines.push((format!("X {:.1}", p[0]), fade(own)));
+            lines.push((format!("Y {:.1}", p[1]), fade(own)));
+            lines.push((format!("Z {:.1}", p[2]), fade(own)));
             // The same place in the other world: the Nether is eight times smaller.
-            if !sample && t.coords_other {
-                let (name, k) = match self.dim {
-                    super::Dim::Overworld => ("Nether", 0.125),
-                    super::Dim::Nether => ("Overworld", 8.0),
-                    super::Dim::End => ("", 0.0),
-                };
-                if k != 0.0 {
-                    lines.push(format!("{name} X {:.1}", p[0] * k));
-                    lines.push(format!("{name} Z {:.1}", p[2] * k));
-                }
+            if !sample
+                && t.coords_other
+                && let Some((name, k, color)) = other
+            {
+                lines.push((format!("{name} X {:.1}", p[0] * k), fade(color)));
+                lines.push((format!("{name} Z {:.1}", p[2] * k), fade(color)));
             }
         }
-        for (n, line) in lines.iter().enumerate() {
+        for (n, (line, color)) in lines.iter().enumerate() {
             batch.text(
                 atlas,
                 line,
                 r.x + 3.0,
                 (r.y + 3.0 + n as f32 * 10.0).round(),
-                white(),
+                *color,
                 true,
             );
         }

@@ -106,7 +106,7 @@ pub struct TouchLayout {
 
 /// Controls the player can move and resize: the nine buttons (in [`TouchButton::ALL`]'s order),
 /// then close, Shift, hide keyboard, the joystick and the F3 combinations button.
-pub const CUSTOM_SLOTS: usize = 15;
+pub const CUSTOM_SLOTS: usize = 16;
 /// The slot of the close button, Shift toggle, keyboard button and joystick.
 pub const SLOT_CLOSE: usize = 9;
 pub const SLOT_SHIFT: usize = 10;
@@ -118,6 +118,10 @@ pub const ALIGN_REACH: f32 = 6.0;
 pub const SLOT_COMBOS: usize = 13;
 /// The frame rate and coordinates readout.
 pub const SLOT_INFO: usize = 14;
+/// The zoom button.
+pub const SLOT_ZOOM: usize = 15;
+/// The zoom levels the zoom button can have, from [`TouchSettings::zoom_level`].
+pub const ZOOM_FACTORS: [f32; 6] = [2.0, 3.0, 4.0, 6.0, 8.0, 10.0];
 /// A control left alone: no offset, its normal size.
 pub const NO_CUSTOM: [f32; 3] = [0.0, 0.0, 1.0];
 /// The size multiplier a control may be given.
@@ -166,6 +170,16 @@ impl TouchLayout {
             SLOT_KEYBOARD => {
                 let close = self.base_close();
                 Rect::new(close.x - close.w - 5.0, close.y, 20.0, 20.0)
+            }
+            SLOT_ZOOM => {
+                let small = (18.0 * self.scale).round();
+                let gap = (5.0 * self.scale).round();
+                Rect::new(
+                    self.width - self.right - small - 4.0 * (small + gap),
+                    self.top,
+                    small,
+                    small,
+                )
             }
             SLOT_INFO => Rect::new(self.left, self.top + 22.0, 64.0, 62.0),
             SLOT_COMBOS => {
@@ -330,6 +344,9 @@ impl TouchLayout {
     }
     /// The button that hides the system keyboard, left of the close button: the iPhone's
     /// keyboard has no key of its own for it.
+    pub fn zoom_button(&self) -> Rect {
+        self.slot_rect(SLOT_ZOOM)
+    }
     pub fn keyboard_hide(&self) -> Rect {
         self.slot_rect(SLOT_KEYBOARD)
     }
@@ -647,6 +664,10 @@ pub struct TouchSettings {
     pub coords_other: bool,
     /// Moving a control in the layout editor lines it up with the ones near it.
     pub align: bool,
+    /// The zoom button's magnification: an index of [`ZOOM_FACTORS`].
+    pub zoom_level: u8,
+    /// The zoom button toggles instead of zooming while it is held.
+    pub zoom_toggle: bool,
     /// Where the player put each control and how big (TouchLayout::custom).
     pub custom: [[f32; 3]; CUSTOM_SLOTS],
 }
@@ -662,6 +683,8 @@ impl Default for TouchSettings {
             show_coords: false,
             coords_other: false,
             align: false,
+            zoom_level: 2,
+            zoom_toggle: false,
             custom: [NO_CUSTOM; CUSTOM_SLOTS],
         }
     }
@@ -724,6 +747,12 @@ impl TouchSettings {
                 "showCoords" => s.show_coords = value == "true",
                 "coordsOther" => s.coords_other = value == "true",
                 "align" => s.align = value == "true",
+                "zoomToggle" => s.zoom_toggle = value == "true",
+                "zoomLevel" => {
+                    s.zoom_level = value
+                        .parse::<u8>()
+                        .map_or(s.zoom_level, |v| v.min(ZOOM_FACTORS.len() as u8 - 1))
+                }
                 "haptics" => {
                     s.haptics = match value {
                         "true" => true,
@@ -748,6 +777,10 @@ impl TouchSettings {
             self.coords_other,
             self.align
         );
+        text.push_str(&format!(
+            "zoomLevel:{}\nzoomToggle:{}\n",
+            self.zoom_level, self.zoom_toggle
+        ));
         for (n, c) in self.custom.iter().enumerate() {
             if *c != NO_CUSTOM {
                 text.push_str(&format!("slot{n}:{},{},{}\n", c[0], c[1], c[2]));
@@ -1041,6 +1074,8 @@ mod tests {
             show_coords: true,
             coords_other: true,
             align: true,
+            zoom_level: 4,
+            zoom_toggle: true,
             custom: {
                 let mut c = [NO_CUSTOM; CUSTOM_SLOTS];
                 c[3] = [12.0, -7.5, 1.5];
