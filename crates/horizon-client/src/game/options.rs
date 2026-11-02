@@ -238,6 +238,10 @@ impl Game<'_> {
                     #[cfg(target_os = "ios")]
                     self.open_account();
                 }
+                Event::EditTouchLayout => {
+                    #[cfg(target_os = "ios")]
+                    self.begin_layout_edit();
+                }
                 Event::ListShaderPacks => {
                     self.settings.shader_packs =
                         horizon_client::shader_pack_list::scan(&Self::shader_packs_dir());
