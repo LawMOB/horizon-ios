@@ -1,36 +1,33 @@
 //! The calls themselves. UIKit's are main-thread only: each takes the main thread's marker and does
 //! nothing without it (the game calls them from its event loop, on the main thread).
-use block2::RcBlock;
 use horizon_client_input::gamepad::{Button, GlyphStyle, PadState};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_foundation::{MainThreadMarker, NSDictionary, NSString, NSURL};
 use objc2_game_controller::{
-    GCController, GCControllerAxisInput, GCControllerButtonInput, GCControllerDirectionPad,
-    GCDevice, GCKeyCodeBackslash, GCKeyCodeCapsLock, GCKeyCodeCloseBracket, GCKeyCodeComma,
-    GCKeyCodeDeleteForward, GCKeyCodeDeleteOrBackspace, GCKeyCodeDownArrow, GCKeyCodeEight,
-    GCKeyCodeEnd, GCKeyCodeEqualSign, GCKeyCodeEscape, GCKeyCodeF1, GCKeyCodeF2, GCKeyCodeF3,
-    GCKeyCodeF4, GCKeyCodeF5, GCKeyCodeF6, GCKeyCodeF7, GCKeyCodeF8, GCKeyCodeF9, GCKeyCodeF10,
-    GCKeyCodeF11, GCKeyCodeF12, GCKeyCodeFive, GCKeyCodeFour, GCKeyCodeGraveAccentAndTilde,
-    GCKeyCodeHome, GCKeyCodeHyphen, GCKeyCodeInsert, GCKeyCodeKeyA, GCKeyCodeKeyB, GCKeyCodeKeyC,
-    GCKeyCodeKeyD, GCKeyCodeKeyE, GCKeyCodeKeyF, GCKeyCodeKeyG, GCKeyCodeKeyH, GCKeyCodeKeyI,
-    GCKeyCodeKeyJ, GCKeyCodeKeyK, GCKeyCodeKeyL, GCKeyCodeKeyM, GCKeyCodeKeyN, GCKeyCodeKeyO,
-    GCKeyCodeKeyP, GCKeyCodeKeyQ, GCKeyCodeKeyR, GCKeyCodeKeyS, GCKeyCodeKeyT, GCKeyCodeKeyU,
-    GCKeyCodeKeyV, GCKeyCodeKeyW, GCKeyCodeKeyX, GCKeyCodeKeyY, GCKeyCodeKeyZ, GCKeyCodeLeftAlt,
+    GCController, GCControllerButtonInput, GCControllerDirectionPad, GCDevice, GCKeyCodeBackslash,
+    GCKeyCodeCapsLock, GCKeyCodeCloseBracket, GCKeyCodeComma, GCKeyCodeDeleteForward,
+    GCKeyCodeDeleteOrBackspace, GCKeyCodeDownArrow, GCKeyCodeEight, GCKeyCodeEnd,
+    GCKeyCodeEqualSign, GCKeyCodeEscape, GCKeyCodeF1, GCKeyCodeF2, GCKeyCodeF3, GCKeyCodeF4,
+    GCKeyCodeF5, GCKeyCodeF6, GCKeyCodeF7, GCKeyCodeF8, GCKeyCodeF9, GCKeyCodeF10, GCKeyCodeF11,
+    GCKeyCodeF12, GCKeyCodeFive, GCKeyCodeFour, GCKeyCodeGraveAccentAndTilde, GCKeyCodeHome,
+    GCKeyCodeHyphen, GCKeyCodeInsert, GCKeyCodeKeyA, GCKeyCodeKeyB, GCKeyCodeKeyC, GCKeyCodeKeyD,
+    GCKeyCodeKeyE, GCKeyCodeKeyF, GCKeyCodeKeyG, GCKeyCodeKeyH, GCKeyCodeKeyI, GCKeyCodeKeyJ,
+    GCKeyCodeKeyK, GCKeyCodeKeyL, GCKeyCodeKeyM, GCKeyCodeKeyN, GCKeyCodeKeyO, GCKeyCodeKeyP,
+    GCKeyCodeKeyQ, GCKeyCodeKeyR, GCKeyCodeKeyS, GCKeyCodeKeyT, GCKeyCodeKeyU, GCKeyCodeKeyV,
+    GCKeyCodeKeyW, GCKeyCodeKeyX, GCKeyCodeKeyY, GCKeyCodeKeyZ, GCKeyCodeLeftAlt,
     GCKeyCodeLeftArrow, GCKeyCodeLeftControl, GCKeyCodeLeftShift, GCKeyCodeNine, GCKeyCodeOne,
     GCKeyCodeOpenBracket, GCKeyCodePageDown, GCKeyCodePageUp, GCKeyCodePeriod, GCKeyCodeQuote,
     GCKeyCodeReturnOrEnter, GCKeyCodeRightAlt, GCKeyCodeRightArrow, GCKeyCodeRightControl,
     GCKeyCodeRightShift, GCKeyCodeSemicolon, GCKeyCodeSeven, GCKeyCodeSix, GCKeyCodeSlash,
     GCKeyCodeSpacebar, GCKeyCodeTab, GCKeyCodeThree, GCKeyCodeTwo, GCKeyCodeUpArrow, GCKeyCodeZero,
-    GCKeyboard, GCMouse, GCMouseInput,
+    GCKeyboard,
 };
 use objc2_ui_kit::{
     UIAlertAction, UIAlertActionStyle, UIAlertController, UIAlertControllerStyle, UIApplication,
     UIImpactFeedbackGenerator, UIImpactFeedbackStyle, UIPasteboard, UIViewController,
 };
 use std::cell::RefCell;
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicI32, Ordering};
 
 pub fn open_url(url: &str) -> bool {
     let Some(mtm) = MainThreadMarker::new() else {
@@ -185,70 +182,6 @@ pub fn keyboard() -> Option<Vec<&'static str>> {
                 .map(|(_, name)| name)
                 .collect(),
         )
-    }
-}
-
-/// Mouse movement and scrolling since the last poll, in thousandths of a point: GameController
-/// reports them to handlers, which add them here.
-static MOUSE_DX: AtomicI32 = AtomicI32::new(0);
-static MOUSE_DY: AtomicI32 = AtomicI32::new(0);
-static MOUSE_SCROLL: AtomicI32 = AtomicI32::new(0);
-
-type MovedBlock = RcBlock<dyn Fn(NonNull<GCMouseInput>, f32, f32)>;
-type ScrollBlock = RcBlock<dyn Fn(NonNull<GCControllerAxisInput>, f32)>;
-
-thread_local! {
-    /// The mouse whose handlers are installed, and the handlers (kept alive here).
-    static MOUSE: RefCell<Option<(Retained<GCMouseInput>, MovedBlock, ScrollBlock)>> =
-        const { RefCell::new(None) };
-}
-
-/// A hardware mouse (USB or Bluetooth): what it moved and scrolled since the last call, and
-/// which buttons (left, right, middle) are down; none when no mouse is connected.
-pub fn mouse() -> Option<crate::MouseState> {
-    // Safety: GameController's getters and handler setters are safe to call from the main
-    // thread, which the game's loop is; the handlers only add to atomics.
-    unsafe {
-        let mouse = GCMouse::current().or_else(|| GCMouse::mice().firstObject())?;
-        let input = mouse.mouseInput()?;
-        MOUSE.with(|installed| {
-            let mut installed = installed.borrow_mut();
-            let same = installed
-                .as_ref()
-                .is_some_and(|(i, _, _)| Retained::as_ptr(i) == Retained::as_ptr(&input));
-            if !same {
-                let moved: MovedBlock =
-                    RcBlock::new(|_: NonNull<GCMouseInput>, dx: f32, dy: f32| {
-                        MOUSE_DX.fetch_add((dx * 1000.0) as i32, Ordering::Relaxed);
-                        MOUSE_DY.fetch_add((dy * 1000.0) as i32, Ordering::Relaxed);
-                    });
-                let scrolled: ScrollBlock =
-                    RcBlock::new(|_: NonNull<GCControllerAxisInput>, value: f32| {
-                        MOUSE_SCROLL.fetch_add((value * 1000.0) as i32, Ordering::Relaxed);
-                    });
-                input.setMouseMovedHandler(&*moved as *const _ as *mut _);
-                input
-                    .scroll()
-                    .yAxis()
-                    .setValueChangedHandler(&*scrolled as *const _ as *mut _);
-                *installed = Some((input.clone(), moved, scrolled));
-            }
-        });
-        let down = |button: Option<Retained<GCControllerButtonInput>>| {
-            button.is_some_and(|b| b.isPressed())
-        };
-        Some(crate::MouseState {
-            moved: [
-                MOUSE_DX.swap(0, Ordering::Relaxed) as f32 / 1000.0,
-                MOUSE_DY.swap(0, Ordering::Relaxed) as f32 / 1000.0,
-            ],
-            scroll: MOUSE_SCROLL.swap(0, Ordering::Relaxed) as f32 / 1000.0,
-            buttons: [
-                down(Some(input.leftButton())),
-                down(input.rightButton()),
-                down(input.middleButton()),
-            ],
-        })
     }
 }
 

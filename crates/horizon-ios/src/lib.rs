@@ -80,25 +80,6 @@ pub fn controller() -> Option<(PadState, GlyphStyle)> {
     None
 }
 
-/// A hardware mouse's state since the last poll.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct MouseState {
-    /// How far it moved (points, x right, y down).
-    pub moved: [f32; 2],
-    /// How far the wheel scrolled (positive is up).
-    pub scroll: f32,
-    /// Left, right and middle buttons held.
-    pub buttons: [bool; 3],
-}
-
-/// The hardware mouse (USB or Bluetooth), if one is connected.
-pub fn mouse() -> Option<MouseState> {
-    #[cfg(target_os = "ios")]
-    return ios::mouse();
-    #[cfg(not(target_os = "ios"))]
-    None
-}
-
 /// The keys held on a hardware keyboard (USB or Bluetooth), by the names the game's key bindings
 /// use (`key.keyboard.w`); `None` when no keyboard is connected.
 pub fn keyboard() -> Option<Vec<&'static str>> {
