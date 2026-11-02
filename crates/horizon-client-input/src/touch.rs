@@ -56,10 +56,11 @@ pub enum TouchButton {
     Perspective,
     Pause,
     Use,
+    Swap,
 }
 
 impl TouchButton {
-    pub const ALL: [TouchButton; 8] = [
+    pub const ALL: [TouchButton; 9] = [
         TouchButton::Jump,
         TouchButton::Sneak,
         TouchButton::Sprint,
@@ -68,6 +69,7 @@ impl TouchButton {
         TouchButton::Perspective,
         TouchButton::Pause,
         TouchButton::Use,
+        TouchButton::Swap,
     ];
     /// What it presses on the controller (docs/controllers.md's Bedrock layout).
     pub fn press(self, pad: &mut PadState) {
@@ -80,6 +82,7 @@ impl TouchButton {
             TouchButton::Perspective => pad.set(Button::DPadUp, true),
             TouchButton::Pause => pad.set(Button::Start, true),
             TouchButton::Use => pad.triggers[0] = 1.0,
+            TouchButton::Swap => pad.set(Button::West, true),
         }
     }
 }
@@ -151,16 +154,8 @@ impl TouchLayout {
             TouchButton::Pause => top(0.0),
             TouchButton::Chat => top(1.0),
             TouchButton::Perspective => top(2.0),
-            // Just under the crosshair.
-            TouchButton::Use => {
-                let (uw, uh) = ((40.0 * k).round(), (18.0 * k).round());
-                Rect::new(
-                    (w / 2.0).floor() - (uw / 2.0).floor(),
-                    (h / 2.0).floor() + 14.0,
-                    uw,
-                    uh,
-                )
-            }
+            TouchButton::Use => Rect::new(jump.x, jump.y - big - gap, big, big),
+            TouchButton::Swap => Rect::new(jump.x - big - gap, jump.y - big - gap, big, big),
         }
     }
     /// The joystick's reach from where the thumb landed.
