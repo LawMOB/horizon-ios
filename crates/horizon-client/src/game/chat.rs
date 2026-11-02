@@ -667,6 +667,9 @@ impl Game<'_> {
     /// The Chat option's restrictions stop the message here too, so a
     /// control-socket `chat` cannot send what the player's setting hides.
     pub(super) fn handle_chat_input(&mut self, message: &str) {
+        if self.waypoint_command(message) {
+            return;
+        }
         if !self.chat_abilities().allows(message) {
             return;
         }

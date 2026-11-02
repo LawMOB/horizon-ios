@@ -207,6 +207,7 @@ mod ui_control;
 mod vault;
 mod villagers;
 mod wandering_trader;
+mod waypoints;
 mod win;
 mod wind;
 mod wither;
@@ -5510,6 +5511,7 @@ impl Game<'_> {
             // Player.die: the dimension and block of the death.
             self.level.last_death =
                 Some((self.dim.id().to_owned(), feet.map(|v| v.floor() as i32)));
+            self.waypoint_death(self.dim, feet);
             self.death_message();
             // ServerPlayer.die: deaths, and the time-since counters restart.
             self.stats.custom("deaths", 1);
@@ -6062,6 +6064,7 @@ impl Game<'_> {
         self.draw_debug_overlay(&mut batch, size);
         self.frame_graph
             .draw(self.settings.horizon.overlay, &mut batch, &self.gui.atlas);
+        self.draw_waypoints(&mut batch);
         #[cfg(target_os = "ios")]
         self.draw_touch_controls(&mut batch);
         self.draw_pad_cursor(&mut batch);
