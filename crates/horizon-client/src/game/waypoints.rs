@@ -75,6 +75,20 @@ struct PanelRects {
 
 const ROW: f32 = 17.0;
 
+/// Where a place `side` to the right and `up` above the view's centre goes on the edge of a
+/// `w` x `h` screen (its direction from the centre, kept off the very border).
+fn edge_point(side: f64, up: f64, w: f32, h: f32) -> (f32, f32) {
+    let (dx, dy) = (side as f32, -up as f32);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1e-6 {
+        return (w / 2.0, h - 14.0);
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let (mx, my) = (w / 2.0 - 8.0, h / 2.0 - 14.0);
+    let k = (mx / ux.abs().max(1e-6)).min(my / uy.abs().max(1e-6));
+    (w / 2.0 + ux * k, h / 2.0 + uy * k)
+}
+
 fn panel_rects(w: f32, h: f32) -> PanelRects {
     let n = (((h - 62.0) / ROW) as usize).clamp(2, 5);
     let width = (w - 16.0).clamp(160.0, 300.0);
@@ -466,7 +480,7 @@ impl Game<'_> {
             .as_ref()
             .map(|q| [q.position.x, q.position.y, q.position.z].map(|v| v.floor() as i32));
         let per = p.rows.len();
-        let mut rename: Option<usize> = None;
+        let mut chat: Option<String> = None;
         STORE.with_borrow_mut(|s| {
             s.open(&world);
             let mine = s.of(dim);
@@ -510,15 +524,21 @@ impl Game<'_> {
                         s.list.remove(i);
                         s.save();
                     } else if name.contains(at) {
-                        rename = Some(page * per + n + 1);
+                        chat = Some(format!("!wp nombre {} ", page * per + n + 1));
+                    } else if Rect::new(name.x + name.w, row.y, delete.x - name.x - name.w, row.h)
+                        .contains(at)
+                    {
+                        // The distance: a teleport command to the place, ready to send.
+                        let q = s.list[i].pos;
+                        chat = Some(format!("/tp @s {} {} {}", q[0], q[1], q[2]));
                     }
                 }
             }
         });
         // The name is typed in the chat box, which the system keyboard serves.
-        if let Some(n) = rename {
+        if let Some(text) = chat {
             PANEL.set(false);
-            self.open_chat(&format!("!wp nombre {n} "));
+            self.open_chat(&text);
         }
     }
 
@@ -698,16 +718,6 @@ impl Game<'_> {
                 f64::from(w.pos[2]) + 0.5 - eye[2],
             ];
             let depth = dot(d, forward);
-            if depth <= 0.05 {
-                continue;
-            }
-            let nx = dot(d, right) / depth / (tan * aspect);
-            let ny = dot(d, up) / depth / tan;
-            if nx.abs() > 1.0 || ny.abs() > 1.0 {
-                continue;
-            }
-            let x = ((nx as f32 + 1.0) / 2.0 * batch.width).round();
-            let y = ((1.0 - ny as f32) / 2.0 * batch.height).round();
             let [r, g, b] = COLORS[w.color].1;
             let meters = dot(d, d).sqrt();
             let dist = if meters >= 1000.0 {
@@ -715,6 +725,30 @@ impl Game<'_> {
             } else {
                 format!("{} m", meters.round() as i32)
             };
+            let (nx, ny) = (
+                dot(d, right) / depth.max(0.05) / (tan * aspect),
+                dot(d, up) / depth.max(0.05) / tan,
+            );
+            if depth <= 0.05 || nx.abs() > 1.0 || ny.abs() > 1.0 {
+                // Out of view: a small note on the screen's edge, on the side it lies.
+                let (x, y) = edge_point(dot(d, right), dot(d, up), batch.width, batch.height);
+                let side = if x < batch.width / 2.0 { "<" } else { ">" };
+                let line = format!("{side} {} {dist}", w.name);
+                let tw = HudBatch::text_width(atlas, &line);
+                batch.text(
+                    atlas,
+                    &line,
+                    (x - tw / 2.0)
+                        .clamp(2.0, (batch.width - tw - 2.0).max(2.0))
+                        .round(),
+                    y.round(),
+                    rgba(r, g, b, alpha / 2 + alpha / 4),
+                    true,
+                );
+                continue;
+            }
+            let x = ((nx as f32 + 1.0) / 2.0 * batch.width).round();
+            let y = ((1.0 - ny as f32) / 2.0 * batch.height).round();
             batch.fill(atlas, x - 2.0, y - 2.0, 5.0, 5.0, rgba(r, g, b, alpha));
             batch.fill(atlas, x - 1.0, y - 1.0, 3.0, 3.0, rgba(0, 0, 0, alpha / 2));
             for (n, line) in [w.name.as_str(), dist.as_str()].iter().enumerate() {
@@ -735,6 +769,26 @@ impl Game<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_points_stay_on_screen() {
+        for (s, u) in [
+            (1.0, 0.0),
+            (-1.0, 0.3),
+            (0.0, 1.0),
+            (0.0, -1.0),
+            (0.0, 0.0),
+            (5.0, 5.0),
+        ] {
+            let (x, y) = edge_point(s, u, 426.0, 196.0);
+            assert!(
+                (0.0..=426.0).contains(&x) && (0.0..=196.0).contains(&y),
+                "{s} {u}"
+            );
+        }
+        assert!(edge_point(1.0, 0.0, 426.0, 196.0).0 > 213.0);
+        assert!(edge_point(-1.0, 0.0, 426.0, 196.0).0 < 213.0);
+    }
 
     #[test]
     fn the_panel_fits_small_and_big_screens() {
