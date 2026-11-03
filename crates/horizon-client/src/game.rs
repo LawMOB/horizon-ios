@@ -38,6 +38,7 @@ mod commands;
 mod composter;
 mod consume;
 mod control;
+mod cooling;
 mod copper_golems;
 mod creaking;
 mod creative_hotbar;

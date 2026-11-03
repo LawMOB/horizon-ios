@@ -230,6 +230,7 @@ impl Opt {
             Opt::TouchOpacity => "horizon.options.touch_opacity",
             Opt::TouchButtonScale => "horizon.options.touch_button_size",
             Opt::TouchHaptics => "horizon.options.touch_haptics",
+            Opt::TouchCool => "horizon.options.touch_cool",
         }
     }
     pub(crate) fn kind(self, s: &Settings) -> Kind {
@@ -557,6 +558,9 @@ impl Opt {
             Opt::PadEnabled => on_off(s.controller.enabled),
             Opt::PadVibration => on_off(s.controller.vibration),
             Opt::TouchHaptics => on_off(s.touch.haptics),
+            Opt::TouchCool => {
+                Text::literal(["Off", "Auto", "Eco"][usize::from(s.touch.cool.min(2))])
+            }
             Opt::PadAdaptiveTriggers => on_off(s.controller.adaptive_triggers),
             Opt::PadInvertX => on_off(s.controller.invert_x),
             Opt::PadInvertY => on_off(s.controller.invert_y),
@@ -758,6 +762,7 @@ impl Opt {
             Opt::PadEnabled => s.controller.enabled = !s.controller.enabled,
             Opt::PadVibration => s.controller.vibration = !s.controller.vibration,
             Opt::TouchHaptics => s.touch.haptics = !s.touch.haptics,
+            Opt::TouchCool => s.touch.cool = (s.touch.cool + 1) % 3,
             Opt::PadAdaptiveTriggers => {
                 s.controller.adaptive_triggers = !s.controller.adaptive_triggers
             }
@@ -1556,6 +1561,7 @@ impl OptionsUi {
                     Opt::TouchButtonScale,
                     Opt::TouchOpacity,
                     Opt::TouchHaptics,
+                    Opt::TouchCool,
                 ]);
                 rows.push(Row::Buttons(
                     button(

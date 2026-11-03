@@ -13,7 +13,7 @@ horizon-client-input = { path = "../horizon-client-input" }
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.5.2"
 block2 = "0.5.1"
-objc2-foundation = { version = "0.2.2", features = ["NSString", "NSURL", "NSDictionary", "NSArray", "NSGeometry"] }
+objc2-foundation = { version = "0.2.2", features = ["NSString", "NSURL", "NSDictionary", "NSArray", "NSGeometry", "NSProcessInfo"] }
 objc2-ui-kit = { version = "0.2.2", features = [
     "block2",
     "UIApplication",

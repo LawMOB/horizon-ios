@@ -723,6 +723,7 @@ pub enum Opt {
     TouchOpacity,
     TouchButtonScale,
     TouchHaptics,
+    TouchCool,
 }
 
 #[cfg(test)]

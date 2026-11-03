@@ -4,6 +4,7 @@
   "horizon.options.touch_opacity": "Button Opacity",
   "horizon.options.touch_button_size": "Button Size",
   "horizon.options.touch_haptics": "Haptics",
+  "horizon.options.touch_cool": "Cool Mode",
   "horizon.options.adaptive_triggers": "Adaptive Triggers",
   "horizon.options.lightbar": "Lightbar",
   "horizon.options.look_sensitivity": "Look Sensitivity",

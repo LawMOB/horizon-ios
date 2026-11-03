@@ -683,6 +683,9 @@ pub struct TouchSettings {
     pub zoom_level: u8,
     /// The zoom button toggles instead of zooming while it is held.
     pub zoom_toggle: bool,
+    /// Cool Mode: 0 off, 1 auto (lowers the frame rate and resolution when the device says it
+    /// is hot), 2 eco (always a lower frame rate and resolution, and more when hot).
+    pub cool: u8,
     /// Where the player put each control and how big (TouchLayout::custom).
     pub custom: [[f32; 3]; CUSTOM_SLOTS],
 }
@@ -698,6 +701,7 @@ impl Default for TouchSettings {
             show_coords: false,
             coords_other: false,
             align: false,
+            cool: 1,
             zoom_level: 2,
             zoom_toggle: false,
             custom: [NO_CUSTOM; CUSTOM_SLOTS],
@@ -763,6 +767,7 @@ impl TouchSettings {
                 "coordsOther" => s.coords_other = value == "true",
                 "align" => s.align = value == "true",
                 "zoomToggle" => s.zoom_toggle = value == "true",
+                "cool" => s.cool = value.parse::<u8>().map_or(s.cool, |v| v.min(2)),
                 "zoomLevel" => {
                     s.zoom_level = value
                         .parse::<u8>()
@@ -793,8 +798,8 @@ impl TouchSettings {
             self.align
         );
         text.push_str(&format!(
-            "zoomLevel:{}\nzoomToggle:{}\n",
-            self.zoom_level, self.zoom_toggle
+            "zoomLevel:{}\nzoomToggle:{}\ncool:{}\n",
+            self.zoom_level, self.zoom_toggle, self.cool
         ));
         for (n, c) in self.custom.iter().enumerate() {
             if *c != NO_CUSTOM {
@@ -1089,6 +1094,7 @@ mod tests {
             show_coords: true,
             coords_other: true,
             align: true,
+            cool: 2,
             zoom_level: 4,
             zoom_toggle: true,
             custom: {

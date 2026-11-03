@@ -3,7 +3,7 @@
 use horizon_client_input::gamepad::{Button, GlyphStyle, PadState};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_foundation::{MainThreadMarker, NSDictionary, NSString, NSURL};
+use objc2_foundation::{MainThreadMarker, NSDictionary, NSProcessInfo, NSString, NSURL};
 use objc2_game_controller::{
     GCController, GCControllerButtonInput, GCControllerDirectionPad, GCDevice, GCKeyCodeBackslash,
     GCKeyCodeCapsLock, GCKeyCodeCloseBracket, GCKeyCodeComma, GCKeyCodeDeleteForward,
@@ -78,6 +78,16 @@ pub fn haptic(strength: f32) {
             generator.prepare();
         }
     });
+}
+
+/// How hot the device says it is: 0 nominal, 1 fair, 2 serious, 3 critical
+/// (`NSProcessInfo.thermalState`).
+pub fn thermal_state() -> u8 {
+    // Safety: processInfo is a shared object and thermalState a plain getter, safe from any thread.
+    unsafe {
+        let info = NSProcessInfo::processInfo();
+        info.thermalState().0.clamp(0, 3) as u8
+    }
 }
 
 /// The keys held on a hardware keyboard (USB or Bluetooth), by the names `key.keyboard.*` the

@@ -277,7 +277,10 @@ impl Game<'_> {
             r.set_present_mode(s.vsync, s.horizon.present_mode);
             r.animated_textures = s.horizon.animated_textures;
             r.set_mipmap_levels(s.mipmap_levels.max(0) as u32);
-            r.set_world_post(s.horizon.resolution_scale as f32 / 100.0, s.horizon.fxaa);
+            r.set_world_post(
+                s.horizon.resolution_scale as f32 * super::cooling::scale() / 100.0,
+                s.horizon.fxaa,
+            );
             r.set_hdr(
                 s.horizon.hdr,
                 s.horizon.hdr_paper_white as f32,
@@ -352,9 +355,15 @@ impl Game<'_> {
             has_overlay: false,
         };
         let limit = framerate_limit(self.settings.max_fps as i32, context);
-        self.settings
+        let limit = self
+            .settings
             .horizon
-            .battery_limit(limit, self.title.is_none(), self.focused)
+            .battery_limit(limit, self.title.is_none(), self.focused);
+        // Cool Mode's cap, in a world.
+        match super::cooling::fps_cap() {
+            cap if cap > 0 && self.title.is_none() => limit.min(cap),
+            _ => limit,
+        }
     }
     /// `Minecraft.runTick`'s frame limiter: `FramerateLimiter.limitDisplayFPS`
     /// below 260 frames per second, sleeping then spin-waiting until the
@@ -363,6 +372,7 @@ impl Game<'_> {
         if self.options.frames.is_some() {
             return;
         }
+        self.cool_tick();
         let limit = self.framerate_limit();
         match self.settings.horizon.pacing {
             horizon_client::graphics::Pacing::Precise => {

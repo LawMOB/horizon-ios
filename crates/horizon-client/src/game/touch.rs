@@ -1026,6 +1026,10 @@ impl Game<'_> {
         let mut lines: Vec<(String, u32)> = Vec::new();
         if sample || t.show_fps {
             lines.push((format!("{} FPS", self.fps.round() as i32), white()));
+            if t.cool > 0 {
+                let (text, color) = super::cooling::status();
+                lines.push((text, color));
+            }
         }
         if sample || t.show_coords {
             let p = self

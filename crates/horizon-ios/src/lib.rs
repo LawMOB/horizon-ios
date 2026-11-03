@@ -80,6 +80,15 @@ pub fn controller() -> Option<(PadState, GlyphStyle)> {
     None
 }
 
+/// How hot the device says it is: 0 nominal, 1 fair, 2 serious, 3 critical; `None` where the
+/// system does not say (not iOS).
+pub fn thermal_state() -> Option<u8> {
+    #[cfg(target_os = "ios")]
+    return Some(ios::thermal_state());
+    #[cfg(not(target_os = "ios"))]
+    None
+}
+
 /// The keys held on a hardware keyboard (USB or Bluetooth), by the names the game's key bindings
 /// use (`key.keyboard.w`); `None` when no keyboard is connected.
 pub fn keyboard() -> Option<Vec<&'static str>> {
