@@ -914,7 +914,7 @@ impl Game<'_> {
         let backspace = key == Some(KeyCode::Backspace);
         if self.dialog_open() {
             // A server's dialog is over whatever screen is open: it takes the typing.
-            self.dialog_input(key, text);
+            self.dialog_open(key, text);
         } else if self.screen == Screen::Chat && self.title.is_none() {
             match text {
                 Some(t) => self.chat_type(t),
