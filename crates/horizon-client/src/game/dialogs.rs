@@ -56,6 +56,7 @@ impl Game<'_> {
 
     /// A text input of the open dialog has focus, so the system keyboard should be up for it
     /// (touch.rs `touch_poll`). Not under the warning screen, nor while waiting for a response.
+    #[cfg(target_os = "ios")]
     pub(super) fn dialog_text_focused(&self) -> bool {
         let d = &self.dialogs;
         if d.warning || d.waiting.is_some() {
