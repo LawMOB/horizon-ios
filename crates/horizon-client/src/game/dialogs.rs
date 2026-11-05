@@ -54,6 +54,46 @@ impl Game<'_> {
         d.open.is_some() || d.waiting.is_some() || d.warning
     }
 
+    /// A text input of the open dialog has focus, so the system keyboard should be up for it
+    /// (touch.rs `touch_poll`). Not under the warning screen, nor while waiting for a response.
+    pub(super) fn dialog_text_focused(&self) -> bool {
+        let d = &self.dialogs;
+        if d.warning || d.waiting.is_some() {
+            return false;
+        }
+        d.open.as_ref().is_some_and(|open| {
+            open.focus
+                .is_some_and(|f| matches!(open.fields.get(f), Some(Some(_))))
+        })
+    }
+
+    /// The system keyboard's output with a dialog open (pad_menu.rs `pad_osk_output`): text goes
+    /// into the focused text input and Backspace is its key. Return only closes the keyboard
+    /// (touch.rs `ios_typed`): a dialog has no field to submit.
+    pub(super) fn dialog_input(&mut self, key: Option<KeyCode>, text: Option<&str>) {
+        match (key, text) {
+            (Some(KeyCode::Enter), _) => {}
+            (Some(key), _) => {
+                if let Err(e) = self.dialog_key(key, None, None) {
+                    self.error = Some(e);
+                }
+            }
+            (None, Some(text)) => {
+                let typed: String = text.chars().filter(|c| !c.is_control()).collect();
+                if typed.is_empty() {
+                    return;
+                }
+                let Some(open) = self.dialogs.open.as_mut() else {
+                    return;
+                };
+                if let Some(Some(edit)) = open.focus.and_then(|f| open.fields.get_mut(f)) {
+                    edit.insert_text(&typed);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
     /// `showDialog`: the dialog replaces an open one (and a waiting screen);
     /// under the warning screen, it is what Back returns to.
     pub(super) fn show_dialog(&mut self, tag: &Tag) {
