@@ -219,9 +219,11 @@ impl Game<'_> {
     }
 
     /// A text field has focus: the pad's list (chat, signs, books, searches, the anvil), the
-    /// title screens' fields, World Options' fields, the command block and the mod browser.
+    /// title screens' fields, World Options' fields, the command block, the mod browser and the
+    /// text inputs of a server's dialog (a login or registration form, say).
     fn text_input_active(&mut self) -> bool {
-        self.pad_typing()
+        self.dialog_text_focused()
+            || self.pad_typing()
             || self.title.as_mut().is_some_and(|t| t.has_caret_field())
             || (self.screen == Screen::WorldOptions && self.world_options_typing())
             || (self.screen == Screen::CommandBlock && self.title.is_none())
